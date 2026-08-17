@@ -12,6 +12,11 @@ und du darfst sie komplett zerlegen.
 > ⚠️ **Kein einziger Fake-Feature.** Jede angegebene Fähigkeit ist real implementiert und per
 > automatisiertem Test (Playwright, siehe `test/`) verifiziert.
 
+## 🌐 Direkt spielen
+
+**[tobiaszj.github.io/block-chaos](https://tobiaszj.github.io/block-chaos)** – kein Setup, einfach klicken.
+(Braucht WebGPU: Chrome/Edge 113+, Firefox 141+. Funktioniert auch mobil.)
+
 ---
 
 ## ▶️ Starten
@@ -55,6 +60,14 @@ npm run preview   # → dist/ lokal testen
 | **Strg+Z** | ↩️ Rückgängig (bis 40 Schritte) |
 | **Strg+S / Strg+L** | 💾 Speichern / 📂 Laden (localStorage) |
 | **R** | Neustart |
+
+### 📱 Mobil (Touch)
+
+- **Linke Seite ziehen** → Joystick (bewegt die Kamera)
+- **Rechte Seite wischen** → Kamera drehen
+- **Tappen** → am Fadenkreuz bauen oder brechen (Mode-Umschalter unten)
+- **▲/▼** → hoch/runter fliegen
+- **Werkzeug-Grid (rechts)** → 🙃 Grav-Flip · 🌙 Tag/Nacht · 💨 Wind · 🌧️ Regen · 🧨 Kanonen · ☢ Laser (halten)
 
 **Hotbar (1–0):** Holz · Stein · Eis · Gummi · TNT · Wasserquelle · Kanone · Schwarzes Loch · Ballon · Kette
 
