@@ -134,8 +134,9 @@ async function main() {
     clouds.add(g);
   }
   scene.add(clouds);
-  // Wolken treiben langsam um die Insel
-  cloudDrift = (t) => { clouds.rotation.y = t * 0.004; };
+  // Wolken treiben langsam um die Insel (t kommt in ms – also in Sekunden umrechnen,
+  // sonst dreht sich die Wolken-Schicht 6× pro 10 Sekunden)
+  cloudDrift = (t) => { clouds.rotation.y = (t / 1000) * 0.02; }; // Umdrehung ~5 min
 
   // Sockel: die Insel sitzt auf einem runden Podest (Diorama-Feeling)
   const base = new THREE.Mesh(
@@ -474,6 +475,41 @@ async function main() {
         }, true);
         // leichter Wirbel, wird mit dem Loch stärker
         other.body.addForce({ x: -nz * 1.5 * size, y: 0, z: nx * 1.5 * size }, true);
+      }
+
+      // Boden-Sog: Das Loch frisst auch das Terrain in Mund-Reichweite –
+      // das ist, wie es sein soll, ein Loch. Ratenlimitiert, damit die
+      // Insel nicht in 2 Sekunden weg ist. Jede gefressene Zelle zählt
+      // ein Stück zum Wachstum. collapseColumn räumt Schwebendes weg
+      // (keine schwebenden Felsen), und das Loch fällt in seine eigene
+      // Grube – wie es sich gehört.
+      rec.terrainEatAcc = (rec.terrainEatAcc || 0) + STEP;
+      const eatEvery = 0.15 / (0.6 + 0.4 * Math.min(size, 3)); // ~7–11 Zellen/s
+      while (rec.terrainEatAcc >= eatEvery) {
+        rec.terrainEatAcc -= eatEvery;
+        const cx = Math.floor(bp.x), cy = Math.floor(bp.y), cz = Math.floor(bp.z);
+        const r = Math.ceil(mouth + 1);
+        const eatR2 = (mouth + 0.5) * (mouth + 0.5);
+        let best = null, bestD2 = eatR2;
+        for (let di = -r; di <= r; di++)
+          for (let dj = -r; dj <= r; dj++)
+            for (let dk = -r; dk <= r; dk++) {
+              const i = cx + di, j = cy + dj, k = cz + dk;
+              // Die unterste Reihe bleibt als Boden der Grube – sonst fällt
+              // das Loch durch die Insel ins Nirwana und ist weg.
+              if (j === 0) continue;
+              if (!inBounds(i, j, k) || world.grid[key(i, j, k)] !== GROUND) continue;
+              const dx = i + 0.5 - bp.x, dy = j + 0.5 - bp.y, dz = k + 0.5 - bp.z;
+              const d2 = dx * dx + dy * dy + dz * dz;
+              if (d2 < bestD2) { bestD2 = d2; best = { i, j, k }; }
+            }
+        if (best) {
+          world.clearGround(best.i, best.j, best.k);
+          world.collapseColumn(best.i, best.k);
+          rec.absorbed += 0.05;
+          particles.spawnSmall(best.i + 0.5, best.j + 0.5, best.k + 0.5, 0xb26bff, 3);
+          if (Math.random() < 0.15) Sound.suck();
+        }
       }
     }
 
@@ -1563,7 +1599,7 @@ async function main() {
     spawnBlock, removeBody, explodeAt, flipGravity,
     doBreak, doPlace, doPush, selectSlot, aim, fireLaser, laserGroup,
     fireCannon, fireAllCannons, setSlowMo, sound: Sound, gustWind, startRain, attachChainJoint,
-    takeScreenshot, highlight, toggleDayNight, sun, stars: stars,
+    takeScreenshot, highlight, toggleDayNight, sun, stars: stars, clouds,
     doUndo, saveGame, loadGame, newIsland, pushUndo, snapshotWorld,
     get undoCount() { return undoStack.length; },
     get dayPhase() { return dayPhase; }, get dayTarget() { return dayTarget; },

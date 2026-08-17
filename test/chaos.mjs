@@ -42,6 +42,14 @@ const r = await page.evaluate(async () => {
 
   // --- Schwarzes Loch: saugt langsam an + wächst mit jeder Beute ---
   g.selectSlot(9);
+  const KK = (i, j, k) => i + k * 48 + j * 2304;
+  const terrainSum = (ci, ck, rad) => {
+    let s = 0;
+    for (let di = -rad; di <= rad; di++) for (let dk = -rad; dk <= rad; dk++)
+      for (let j = 0; j < 26; j++) if (g.world.grid[KK(ci + di, j, ck + dk)] === 1) s++;
+    return s;
+  };
+  const t0 = terrainSum(20, 20, 6);
   const bh = g.spawnBlock(9, 20, g.world.heightAt(20, 20), 20);
   await sleep(200);
   const sizeOf = a => Math.min(3.2, 1 + a * 0.15);
@@ -52,6 +60,12 @@ const r = await page.evaluate(async () => {
   const a1 = bh.absorbed, size1 = sizeOf(a1);
   await sleep(3000);
   const a2 = bh.absorbed;
+  // Schwebender-Terrain-Check über ganzes Grid (jede Spalte muss von j=0 durchlaufen)
+  let floating = 0;
+  for (let x = 0; x < 48; x++) for (let z = 0; z < 48; z++) {
+    let j = 0; while (j < 26 && g.world.grid[KK(x, j, z)] === 1) j++;
+    for (let j2 = j; j2 < 26; j2++) if (g.world.grid[KK(x, j2, z)] === 1) floating++;
+  }
   out.bh = {
     absorbed1: a1, absorbed2: a2,
     absorbedSome: a1 > 0,          // es hat gefressen
@@ -60,6 +74,10 @@ const r = await page.evaluate(async () => {
     stillEating: a2 >= a1,         // isst weiter
     alive: !bh.dead,
     size1: +size1.toFixed(2),
+    // Boden-Sog: das Loch frisst auch Terrain, Grube bleibt am Stück
+    ateGround: t0 - terrainSum(20, 20, 6) > 0,
+    noFloatingTerrain: floating === 0,
+    stillInWorld: bh.body.translation().y > -0.5,
   };
 
   // --- Zeitlupe ---
