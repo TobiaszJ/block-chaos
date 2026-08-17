@@ -27,7 +27,7 @@ jobs:
 
       - name: Start Vite dev server
         run: |
-          nohup npx vite --port 5173 --strictPort >/tmp/vite.log 2>&1 &
+          nohup npx vite --port 5173 --strictPort --host 127.0.0.1 >/tmp/vite.log 2>&1 &
           for i in $(seq 1 90); do
             if curl -sf http://127.0.0.1:5173/ >/dev/null; then echo "Vite bereit"; exit 0; fi
             sleep 1

@@ -866,10 +866,23 @@ async function main() {
   const camPos = camera.position.clone();
   const keys = new Set();
   let locked = false;
+  let started = false; // wurde das Spiel schon einmal gestartet?
+  const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+  const joyVec = { x: 0, y: 0 }; // virtueller Joystick (-1..1)
+  const pauseHint = document.getElementById('pause-hint');
 
   const startBtn = document.getElementById('start-btn');
   function tryLock() {
     Sound.unlock(); // Audio-Context darf erst nach User-Geste starten
+    started = true;
+    if (isTouch) {
+      // Touch: kein Pointer-Lock, die HUD bleibt immer sichtbar
+      locked = true;
+      startOverlay.classList.add('hidden');
+      hud.classList.remove('hidden');
+      pauseHint.classList.add('hidden');
+      return;
+    }
     const p = renderer.domElement.requestPointerLock();
     if (p && p.catch) p.catch(() => {});
   }
@@ -878,8 +891,16 @@ async function main() {
   document.addEventListener('pointerlockchange', () => {
     locked = document.pointerLockElement === renderer.domElement;
     if (locked) {
+      started = true;
       startOverlay.classList.add('hidden');
       hud.classList.remove('hidden');
+      pauseHint.classList.add('hidden');
+    } else if (started) {
+      // Pause (Esc): HUD + Buttons bleiben bedienbar, kein volles Overlay mehr
+      startOverlay.classList.add('hidden');
+      hud.classList.remove('hidden');
+      pauseHint.classList.remove('hidden');
+      startBtn.textContent = '▶ Weitermachen';
     } else {
       startOverlay.classList.remove('hidden');
       hud.classList.add('hidden');
@@ -940,6 +961,120 @@ async function main() {
     if (e.code === 'KeyL') laserHeld = false;
     if (e.code === 'KeyB') setSlowMo(false);
   });
+
+  // ---------- Touch-Controls (nur auf Touch-Geräten) ----------
+  if (isTouch) {
+    document.body.classList.add('touch');
+    startBtn.textContent = '▶ Tippen zum Chaos';
+    document.querySelector('#start-overlay ul').innerHTML = [
+      '<li><b>Wischen (rechte Seite)</b> – Kamera drehen</li>',
+      '<li><b>Linke Seite antippen &amp; halten</b> – Joystick, zum Fliegen</li>',
+      '<li><b>Tippen</b> – am Fadenkreuz bauen (oder: Modus auf ⛏️ umstellen &amp; brechen)</li>',
+      '<li><b>▲ / ▼</b> – hoch / runter</li>',
+      '<li><b>🙃 🌙 💨 🌧️ 🧨 ☢️</b> – Chaos-Buttons (☢️ halten = Laser)</li>',
+    ].join('');
+    document.getElementById('bottom-left').textContent =
+      'Wischen: Kamera · Links: Joystick · Tippen: Bauen/Brechen';
+
+    const joyBase = document.getElementById('joy-base');
+    const joyKnob = document.getElementById('joy-knob');
+    const joy = { active: false, id: null, bx: 0, by: 0 };
+    const camT = { active: false, id: null, lx: 0, ly: 0, sx: 0, sy: 0, t0: 0, moved: 0 };
+    let touchMode = 'place';
+    const modeBtn = document.getElementById('mode-toggle');
+    function updateModeBtn() {
+      modeBtn.textContent = touchMode === 'place' ? '🧱 Bauen' : '⛏️ Brechen';
+      modeBtn.classList.toggle('break', touchMode === 'break');
+    }
+    modeBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      touchMode = touchMode === 'place' ? 'break' : 'place';
+      updateModeBtn();
+    });
+
+    renderer.domElement.addEventListener('touchstart', (e) => {
+      for (const t of e.changedTouches) {
+        const isLeft = t.clientX < window.innerWidth * 0.45;
+        if (isLeft && !joy.active) {
+          // schwebender Joystick an der Berührungsstelle
+          joy.active = true; joy.id = t.identifier;
+          joy.bx = t.clientX; joy.by = t.clientY;
+          joyBase.style.display = 'block';
+          joyBase.style.left = (t.clientX - 60) + 'px';
+          joyBase.style.top = (t.clientY - 60) + 'px';
+          joyKnob.style.transform = 'translate(0px, 0px)';
+          joyVec.x = 0; joyVec.y = 0;
+          e.preventDefault();
+        } else if (!isLeft && !camT.active) {
+          camT.active = true; camT.id = t.identifier;
+          camT.lx = camT.sx = t.clientX;
+          camT.ly = camT.sy = t.clientY;
+          camT.t0 = performance.now(); camT.moved = 0;
+        }
+      }
+    }, { passive: false });
+
+    renderer.domElement.addEventListener('touchmove', (e) => {
+      for (const t of e.changedTouches) {
+        if (joy.active && t.identifier === joy.id) {
+          let dx = t.clientX - joy.bx, dy = t.clientY - joy.by;
+          const len = Math.hypot(dx, dy), max = 48;
+          if (len > max) { dx = dx / len * max; dy = dy / len * max; }
+          joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+          joyVec.x = dx / max; joyVec.y = dy / max;
+          e.preventDefault();
+        } else if (camT.active && t.identifier === camT.id) {
+          const dxm = t.clientX - camT.lx, dym = t.clientY - camT.ly;
+          camT.moved = Math.max(camT.moved, Math.hypot(t.clientX - camT.sx, t.clientY - camT.sy));
+          yaw -= dxm * 0.005;
+          pitch -= dym * 0.005;
+          pitch = THREE.MathUtils.clamp(pitch, -1.55, 1.55);
+          camT.lx = t.clientX; camT.ly = t.clientY;
+          e.preventDefault();
+        }
+      }
+    }, { passive: false });
+
+    function endTouch(e) {
+      for (const t of e.changedTouches) {
+        if (joy.active && t.identifier === joy.id) {
+          joy.active = false; joy.id = null;
+          joyVec.x = 0; joyVec.y = 0;
+          joyBase.style.display = 'none';
+        } else if (camT.active && t.identifier === camT.id) {
+          const quick = performance.now() - camT.t0 < 300 && camT.moved < 12;
+          camT.active = false; camT.id = null;
+          if (quick) { if (touchMode === 'place') doPlace(); else doBreak(); }
+        }
+      }
+    }
+    renderer.domElement.addEventListener('touchend', endTouch);
+    renderer.domElement.addEventListener('touchcancel', endTouch);
+
+    // ▲/▼: virtuelle Tasten (Space/Shift), direkt ins keys-Set
+    const bindHold = (id, code) => {
+      const el = document.getElementById(id);
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(code); });
+      el.addEventListener('pointerup', () => keys.delete(code));
+      el.addEventListener('pointerleave', () => keys.delete(code));
+    };
+    bindHold('btn-up', 'Space');
+    bindHold('btn-down', 'ShiftLeft');
+
+    // Chaos-Buttons
+    const tap = (id, fn) => document.getElementById(id).addEventListener('pointerdown', (e) => { e.preventDefault(); fn(); });
+    tap('tool-x', flipGravity);
+    tap('tool-n', toggleDayNight);
+    tap('tool-t', gustWind);
+    tap('tool-g', startRain);
+    tap('tool-c', fireAllCannons);
+    const toolL = document.getElementById('tool-l');
+    toolL.addEventListener('pointerdown', (e) => { e.preventDefault(); laserHeld = true; });
+    toolL.addEventListener('pointerup', () => laserHeld = false);
+    toolL.addEventListener('pointerleave', () => laserHeld = false);
+
+    window.__touch = { isTouch: true, joyVec, get mode() { return touchMode; } };
+  }
 
   // HUD-Buttons: Speichern / Laden / Neue Insel
   const btnSave = document.getElementById('btn-save');
@@ -1347,6 +1482,10 @@ async function main() {
       if (keys.has('KeyA')) move.sub(right);
       if (keys.has('Space')) move.y += 1;
       if (keys.has('ShiftLeft') || keys.has('ShiftRight')) move.y -= 1;
+      if (isTouch && (joyVec.x !== 0 || joyVec.y !== 0)) {
+        move.addScaledVector(fwd, -joyVec.y); // Joystick hoch = vor
+        move.addScaledVector(right, joyVec.x); // Joystick rechts = rechts
+      }
       if (move.lengthSq() > 0) {
         move.normalize().multiplyScalar(11 * dt);
         camPos.add(move);
@@ -1429,5 +1568,6 @@ async function main() {
     get undoCount() { return undoStack.length; },
     get dayPhase() { return dayPhase; }, get dayTarget() { return dayTarget; },
     setCamera: (x, y, z) => { camPos.set(x, y, z); },
+    setLook: (y, p) => { yaw = y; pitch = THREE.MathUtils.clamp(p, -1.55, 1.55); },
   };
 }

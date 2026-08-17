@@ -2,7 +2,7 @@
 
 html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e1a; font-family: "Segoe UI", system-ui, sans-serif; }
 
-canvas { display: block; }
+canvas { display: block; touch-action: none; }
 
 .overlay {
   position: fixed; inset: 0; z-index: 50;
@@ -65,7 +65,7 @@ canvas { display: block; }
   font-family: inherit; font-size: 0.82rem; font-weight: 600; color: #fff;
   background: rgba(15, 25, 55, 0.6); border: 1px solid rgba(140, 170, 255, 0.35);
   border-radius: 9px; cursor: pointer; backdrop-filter: blur(4px);
-  transition: background 0.15s, transform 0.05s;
+  transition: background 0.15s, transform 0.05s; pointer-events: auto;
 }
 .hudbtn:hover { background: rgba(45, 70, 140, 0.75); }
 .hudbtn:active { transform: scale(0.97); }
@@ -78,7 +78,7 @@ canvas { display: block; }
 .slot {
   width: 74px; padding: 8px 6px 6px; text-align: center; border-radius: 10px;
   background: rgba(10, 16, 34, 0.62); border: 2px solid rgba(150,170,255,0.25);
-  font-size: 0.72rem; color: #dfe6ff; user-select: none;
+  font-size: 0.72rem; color: #dfe6ff; user-select: none; pointer-events: auto;
 }
 .slot .chip { width: 100%; height: 30px; border-radius: 6px; margin-bottom: 5px; box-shadow: inset 0 -6px 0 rgba(0,0,0,0.25); }
 .slot .key { color: #9fb0e8; font-weight: 700; }
@@ -121,3 +121,51 @@ canvas { display: block; }
   border-radius: 10px; font-size: 0.85rem; color: #ffd7d7;
   background: rgba(60, 10, 10, 0.7); border: 1px solid rgba(255, 120, 120, 0.4);
 }
+
+#pause-hint {
+  position: absolute; top: 12%; left: 50%; transform: translateX(-50%);
+  padding: 10px 24px; border-radius: 999px; font-size: 1rem; font-weight: 600;
+  background: rgba(8, 12, 28, 0.85); border: 1px solid rgba(160,180,255,0.4);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8); pointer-events: none;
+}
+
+/* ---------- Touch-UI (nur auf Touch-Geräten, body.touch) ---------- */
+#touch-ui { position: absolute; inset: 0; pointer-events: none; display: none; }
+body.touch #touch-ui { display: block; }
+
+#joy-base {
+  position: absolute; width: 120px; height: 120px; border-radius: 50%;
+  background: rgba(20, 30, 60, 0.35); border: 2px solid rgba(160,180,255,0.4);
+  display: none; pointer-events: none;
+}
+#joy-knob {
+  position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+  margin: -26px 0 0 -26px; border-radius: 50%;
+  background: rgba(140, 170, 255, 0.75); box-shadow: 0 0 16px rgba(140,170,255,0.5);
+}
+
+#touch-right {
+  position: absolute; right: 10px; bottom: 14px;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.tbtn {
+  pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+  min-width: 46px; min-height: 46px; padding: 6px 8px; font-size: 1.15rem;
+  font-family: inherit; border-radius: 12px; color: #fff;
+  background: rgba(15, 25, 55, 0.65); border: 1px solid rgba(140, 170, 255, 0.4);
+  backdrop-filter: blur(4px); cursor: pointer;
+}
+.tbtn:active { transform: scale(0.94); background: rgba(45, 70, 140, 0.8); }
+
+#tool-btns { display: grid; grid-template-columns: repeat(3, 46px); gap: 6px; }
+#vert-btns { display: flex; gap: 6px; }
+#mode-toggle { min-width: 132px; font-size: 0.95rem; font-weight: 700; }
+#mode-toggle.break { background: rgba(90, 20, 40, 0.75); border-color: rgba(255, 120, 140, 0.55); }
+
+/* Hotbar & Hinweise auf Touch kompakter */
+body.touch #hotbar {
+  left: 32%; width: 56vw; gap: 5px; flex-wrap: wrap; justify-content: center;
+}
+body.touch .slot { width: 54px; padding: 4px 4px 3px; font-size: 0.6rem; }
+body.touch .slot .chip { height: 20px; }
+body.touch #bottom-left { font-size: 0.68rem; }
