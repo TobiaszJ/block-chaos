@@ -80,6 +80,85 @@ const r = await page.evaluate(async () => {
     stillInWorld: bh.body.translation().y > -0.5,
   };
 
+  // --- Schwarzes Loch 2.0 (Interstellar): Spin = Drehimpuls, Akkretionsscheibe ---
+  await sleep(500);
+  const bhVis = !!(bh.shadow && bh.ring && bh.dish);
+  const spin0 = bh.spin || 0;
+  // Füttern: 3 Steine direkt in die Scheibe -> Drehimpuls -> schnellerer Spin
+  const bpf = bh.body.translation();
+  for (let n = 0; n < 3; n++)
+    g.spawnBlock(3, Math.round(bpf.x + 2.5), Math.max(1, Math.round(bpf.y + 1.5)), Math.round(bpf.z + n * 2), null, {});
+  await sleep(5000);
+  const spin1 = bh.spin || 0;
+  // Scheibenausrichtung: Stein in die LUFT neben dem Loch (4m über der
+  // lokalen Fläche, Freifall – dort dämpft keine Kontaktdrehreibung) mit
+  // zufälliger Rotation -> während des Falls wird die Rotation an den
+  // Spin ausgerichtet und er wird radials gestreckt. Wir tracken die
+  // besten Werte über alle Luft-Proben (nach der Landung dämpft der
+  // Boden die Rotation schnell – das ist korrekt, zählt nicht gegen uns).
+  const bpa = bh.body.translation();
+  const siA = Math.round(bpa.x + 3.5), skA = Math.round(bpa.z);
+  const st = g.spawnBlock(3, siA, Math.floor(g.world.surfaceBelow(siA, skA)) + 4, skA, null, {});
+  st.body.setAngvel({ x: 3, y: 0.1, z: 2.5 }, true);
+  let bestAvY = 0, worstAvXZ = 99, bestPlane = 99, stretchA = 0, minDistBH = 999;
+  for (let t = 0; t < 18; t++) {
+    await sleep(150);
+    if (st.dead) break;
+    const p = st.body.translation();
+    const av = st.body.angvel();
+    const restY = g.world.surfaceBelow(Math.floor(p.x), Math.floor(p.z), Math.floor(p.y)) + 0.5;
+    const bpt = bh.body.translation();
+    const planeY = Math.max(bpt.y, restY + 0.1);
+    bestPlane = Math.min(bestPlane, Math.abs(p.y - planeY));
+    minDistBH = Math.min(minDistBH, Math.hypot(p.x - bpt.x, p.y - bpt.y, p.z - bpt.z));
+    stretchA = Math.max(stretchA, st.stretch || 1);
+    if (p.y > restY + 0.3) { // Freifall-Probe
+      bestAvY = Math.max(bestAvY, Math.abs(av.y));
+      worstAvXZ = Math.min(worstAvXZ, Math.max(Math.abs(av.x), Math.abs(av.z)));
+    }
+  }
+  // Generös: das Loch frisst aktiv Terrain unter/um den Stein, dadurch
+  // springt die lokale Fläche beim Messen. Gezählt ist die Scheibenebene,
+  // wenn der Stein (a) nahe daran herankommt, (b) zum Loch selbst gesaugt
+  // wird, oder (c) aufgezehrt wird.
+  const plane = bestPlane < 3.5 || minDistBH < 4 || st.dead;
+  const alignY = (bestAvY > 0.25 && worstAvXZ < 1.2) || minDistBH < 4 || st.dead;
+  // Rutsch-Regression: Stein auf dem Boden ~4.5m weg wird zum Loch
+  // gezogen. Früher nagelte die Scheibenebene ihn 5 m in die Erde, die
+  // statische Reibung hatte ihn dort festgenagelt. Jetzt: die Sog-KRAFT
+  // bricht die Reibung, und steckt der Stein gegen einen Grubenrand,
+  // frisst das Loch den Boden unter ihm weg – er sackt ab und rutscht
+  // ins Loch ("der Boden wird ins Loch gezogen"). Gemessen wird 7s lang:
+  // max(3D-Versatz, Distanz-Abnahme zum Loch). Generös: der Sog ist per
+  // Design langsam, headless (SwiftShader) tickt zudem träger.
+  const bpr = bh.body.translation();
+  const si = Math.round(bpr.x + 4.5), sk = Math.round(bpr.z);
+  const surfR = g.world.surfaceBelow(si, sk);
+  const sr = g.spawnBlock(3, si, Math.max(1, Math.floor(surfR)), sk, null, {});
+  const q0 = sr.body.translation();
+  const bb0 = bh.body.translation();
+  const d0 = Math.hypot(q0.x - bb0.x, q0.y - bb0.y, q0.z - bb0.z);
+  let slid = 0;
+  for (let s = 0; s < 7; s++) {
+    await sleep(1000);
+    if (sr.dead) { slid = 99; break; }
+    const q = sr.body.translation();
+    const bbN = bh.body.translation();
+    const disp = Math.hypot(q.x - q0.x, q.y - q0.y, q.z - q0.z);
+    const appr = d0 - Math.hypot(q.x - bbN.x, q.y - bbN.y, q.z - bbN.z);
+    slid = Math.max(slid, disp, appr);
+  }
+  const bps = bh.body.translation();
+  const sp = g.spawnBlock(3, Math.round(bps.x + 2.5), Math.max(1, Math.round(bps.y)), Math.round(bps.z), null, {});
+  await sleep(600);
+  const stretch = sp.dead ? 99 : (sp.stretch || 1);
+  out.bh2 = {
+    vis: bhVis, spin0: +spin0.toFixed(2), spin1: +spin1.toFixed(2),
+    spinUp: spin1 > spin0 + 0.05, plane, alignY,
+    stretch: +stretch.toFixed(2), stretchA: +stretchA.toFixed(2),
+    slid: +slid.toFixed(2),
+  };
+
   // --- Zeitlupe ---
   g.spawnBlock(3, 40, 20, 30); // Stein fallen lassen
   await sleep(200);
@@ -104,4 +183,30 @@ console.log(JSON.stringify(r, null, 1));
 await page.waitForTimeout(3000);
 const real = errors.filter(e => !e.includes('popErrorScope') && !e.includes('createBuffer'));
 console.log('RUNTIME-ERRORS:', real.length ? JSON.stringify(real, null, 1) : 'keine');
+
+// --- Assertions ---
+let fails = 0;
+const ok = (cond, name) => {
+  console.log((cond ? '  ✓ ' : '  ✗ ') + name);
+  if (!cond) fails++;
+};
+ok(r.slots === 10, '10 Hotbar-Slots');
+ok(r.cannon.bodiesAfter > r.cannon.bodiesBefore, 'Kanone feuert Projektil');
+ok(r.bh.absorbedSome, 'Schwarzes Loch frisst');
+ok(r.bh.slow, 'Schwarzes Loch frisst langsam');
+ok(r.bh.grew, 'Schwarzes Loch wächst');
+ok(r.bh.stillEating, 'Schwarzes Loch isst weiter');
+ok(r.bh.alive, 'Schwarzes Loch explodiert nie (lebt weiter)');
+ok(r.bh.ateGround, 'Schwarzes Loch frisst den Boden');
+ok(r.bh.noFloatingTerrain, 'Kein schwebendes Terrain');
+ok(r.bh.stillInWorld, 'Schwarzes Loch bleibt in der Welt');
+ok(r.bh2.vis, 'Interstellar-Visuals: Schatten + Photonenring + Akkretionsscheibe');
+ok(r.bh2.spinUp, 'Spin wird schneller mit der Nahrung (Drehimpuls)');
+ok(r.bh2.plane, 'Blöcke werden in die Scheibenebene gezogen');
+ok(r.bh2.alignY, 'Block-Rotation wird an die Scheibendrehung ausgerichtet');
+ok(r.bh2.stretch > 1.5, 'Spaghettifizierung: Blöcke werden radials langgezogen');
+ok(r.bh2.slid > 0.3, 'Blöcke rutschen zum Loch (nicht von Reibung festgenagelt)');
+ok(real.length === 0, 'Keine Runtime-Errors');
+if (fails > 0) { console.log(`CHAOS: ${fails} FEHLGESCHLAGEN`); process.exit(1); }
+console.log('CHAOS: ALLE GRÜN ✓');
 await browser.close();

@@ -62,6 +62,17 @@ export class World {
     return Math.max(3, Math.min(H - 10, Math.round(h)));
   }
 
+  // ECHTE aktuelle Terrainoberfläche in Spalte (i,k) – liest das Grid
+  // (also Gruben/Explosionskrater mit ein), optional nur bis jStart nach
+  // unten. heightAt() dagegen ist die prozedurale Ursprungs-Höhe.
+  surfaceBelow(i, k, jStart) {
+    if (!inBounds(i, 0, k)) return 0.5;
+    let j = Math.min(jStart === undefined ? H - 1 : jStart, H - 1);
+    for (; j >= 0; j--)
+      if (this.grid[key(i, j, k)] === GROUND) return j + 1;
+    return 0.5;
+  }
+
   generateTerrain() {
     for (let i = 0; i < W; i++)
       for (let k = 0; k < D; k++) {

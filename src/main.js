@@ -10,7 +10,6 @@ import {
   BALLOON, CHAIN, BLOCKS, PLACEABLE, slotName, TNT_EXPLODE_SPEED,
 } from './blocks.js';
 import { Sound } from './sound.js';
-
 const noWebgpu = document.getElementById('no-webgpu');
 const startOverlay = document.getElementById('start-overlay');
 const hud = document.getElementById('hud');
@@ -277,6 +276,81 @@ async function main() {
   const waterMesh = makeMesh(waterMat, CAP_WATER, false);
   waterMesh.renderOrder = 10;
 
+  // ---------- Schwarzes-Loch-Visuals (Interstellar-Stil) ----------
+  // Ereignishorizont: pure schwarze Kugel – nichts kommt raus.
+  const bhShadowGeom = new THREE.SphereGeometry(1, 48, 32);
+  const bhShadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false });
+  // Photonenring: dünnes blendend-heller Ring am Horizont (Licht, das um
+  // das Loch herumgekrümmt wird) – immer zur Kamera hin.
+  const photonRingTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0.00, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.42, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.50, 'rgba(255,240,220,0.95)');
+    grad.addColorStop(0.56, 'rgba(255,170,90,0.45)');
+    grad.addColorStop(0.72, 'rgba(255,120,50,0.12)');
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 256);
+    return new THREE.CanvasTexture(c);
+  })();
+  // Akkretionsscheibe: flache Ring-Geometrie in der XZ-Ebene (Lokaleinheiten:
+  // innerer Radius 1.25, äußerer 2.9).
+  const bhDiskGeom = new THREE.RingGeometry(1.25, 2.9, 96, 1);
+  bhDiskGeom.rotateX(-Math.PI / 2);
+  // Scheiben-TEXTUR (Canvas): rotierendes Gas-Muster + Doppler-Beaming, ge-
+  // baked in die Textur (helle Seite = "heiße" Seite, dreht mit der Scheibe
+  // um das Loch – sieht aus wie der klassische Interstellar-Hotspot).
+  // (TSL/NodeMaterial kam nicht in Frage: three r185.1 hat einen Bug in
+  // NodeMaterial.setupDiffuseColor – diffuseColor.assign() außerhalb eines
+  // Fn() → "No stack defined for assign operation" 60×/s bei jedem Build.
+  //  Canvas + MeshBasicMaterial ist deterministisch und robust.)
+  const bhDiskTex = (() => {
+    const S = 512, C = S / 2, R_IN = 1.25, R_OUT = 2.9;
+    const PX = C / R_OUT; // Pixel pro Lokaleinheit
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    const img = g.createImageData(S, S);
+    const sstep = (a, b, x) => { x = Math.min(1, Math.max(0, (x - a) / (b - a))); return x * x * (3 - 2 * x); };
+    const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    const cInner = [1.0, 0.96, 0.88], cMid = [1.0, 0.52, 0.16], cOuter = [0.45, 0.12, 0.05];
+    for (let py = 0; py < S; py++) {
+      for (let px = 0; px < S; px++) {
+        const x = (px - C + 0.5) / PX;      // Ring-Lokalkoordinaten (Ring +x = Canvas +x)
+        const y = (C - py + 0.5) / PX;      // Canvas +y zeigt WELT -z (nach rotateX)
+        const r = Math.hypot(x, y);
+        const i = (py * S + px) * 4;
+        if (r < R_IN || r > R_OUT) { img.data[i + 3] = 255; continue; }
+        const th = Math.atan2(y, x);
+        const tRad = (r - R_IN) / (R_OUT - R_IN);
+        const s1 = Math.sin(th * 5 + r * 4), s2 = Math.sin(th * 9 - r * 7);
+        const streak = sstep(-0.3, 0.9, (s1 + s2) / 2);
+        let col = mix3(mix3(cInner, cMid, tRad), cOuter, tRad * tRad * tRad);
+        const beam = Math.cos(th); // +1 = helle Seite (Canvas +x), -1 = dunkle
+        col = mix3(col, [1.0, 0.99, 0.95], Math.max(beam, 0) * 0.45);
+        col = mix3(col, [0.55, 0.16, 0.08], Math.max(-beam, 0) * 0.4);
+        const fade = sstep(R_IN, R_IN + 0.25, r) * (1 - sstep(2.45, R_OUT, r));
+        const bright = (Math.pow(1 - tRad, 2) + 0.12) * (streak * 0.55 + 0.6) * (1 + beam * 0.85) * fade;
+        img.data[i]     = Math.min(255, col[0] * bright * 255);
+        img.data[i + 1] = Math.min(255, col[1] * bright * 255);
+        img.data[i + 2] = Math.min(255, col[2] * bright * 255);
+        img.data[i + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  })();
+  const bhDiskMat = new THREE.MeshBasicMaterial({
+    map: bhDiskTex, side: THREE.DoubleSide, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false,
+  });
+
   // ---------- Dynamische Blöcke ----------
   const MAX_BODIES = 400;
   const bodyOrder = []; // FIFO für Aufräumen, wenn's voll ist
@@ -301,12 +375,29 @@ async function main() {
     const rec = { body, type: typeId, dead: false, absorbed: 0, seed: Math.random() * 10 };
     if (opts.aimDir) rec.aimDir = opts.aimDir;
     if (typeId === BLACKHOLE) {
+      // Interstellar-Visuals: schwarzer Ereignishorizont, Photonenring,
+      // rotierende Akkretionsscheibe + lila Atmosphären-Glow.
+      // Spin = Drehimpuls: hängt davon ab, wie viel es gefressen hat.
+      rec.size = 1;
+      rec.spin = 0.35;
+      rec.phase = Math.random() * 100;
+      rec._prevT = performance.now() / 1000;
+      rec.shadow = new THREE.Mesh(bhShadowGeom, bhShadowMat);
+      scene.add(rec.shadow);
+      rec.ring = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: photonRingTex, transparent: true, depthWrite: false, fog: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      scene.add(rec.ring);
+      rec.dish = new THREE.Mesh(bhDiskGeom, bhDiskMat);
+      scene.add(rec.dish);
       rec.sprite = new THREE.Sprite(new THREE.SpriteMaterial({
         map: bhGlowTex, transparent: true, depthWrite: false, fog: false,
         blending: THREE.AdditiveBlending,
       }));
       scene.add(rec.sprite);
     }
+    if (opts.absorbed) rec.absorbed = opts.absorbed; // Restore aus Save
     world.bodies.add(rec);
     world.bodyByHandle.set(body.handle, rec);
     bodyOrder.push(rec);
@@ -336,6 +427,9 @@ async function main() {
     const idx = bodyOrder.indexOf(rec);
     if (idx >= 0) bodyOrder.splice(idx, 1);
     if (rec.sprite) { scene.remove(rec.sprite); rec.sprite.material.dispose(); rec.sprite = null; }
+    if (rec.shadow) { scene.remove(rec.shadow); rec.shadow = null; }
+    if (rec.ring) { scene.remove(rec.ring); rec.ring.material.dispose(); rec.ring = null; }
+    if (rec.dish) { scene.remove(rec.dish); rec.dish.material.dispose(); rec.dish = null; }
     removeJointsOf(rec);
     if (inStep) pendingRemove.add(rec);
     else world.physicsWorld.removeRigidBody(rec.body);
@@ -432,6 +526,9 @@ async function main() {
     // Kräfte des Vortags löschen, bevor sie integriert werden –
     // Bug: Ballons stiegen nicht, Wasserauftrieb wirkte nicht.
 
+    // Stretch-Reset: Spaghettifizierung gilt nur, solange ein Loch wirkt
+    for (const rb of world.bodies) rb.stretch = 1;
+
     // Schwarze Löcher: saugen LANGSAM an und WACHSEN mit jeder Beute –
     // endlos. Je größer das Loch, desto weiter greift es, desto schneller
     // saugt es und desto größer wird sein „Mund". Sie explodieren NIE.
@@ -441,7 +538,8 @@ async function main() {
       const size  = Math.min(3.2, 1 + rec.absorbed * 0.15); // Größe (visuell + physikalisch)
       const range = 6 + size * 3;                            // Griffweite wächst (9 -> 16 m)
       const mouth = 0.5 + size * 0.45;                       // Schlund ~ Mitte des (gewachsenen) Lochs
-      const speed = 1.4 + (size - 1) * 1.5;                  // Saugkraft wächst nur moderat (1.4 -> 4.7 m/s)
+      const speed = 0.9 + (size - 1) * 1.2;                  // Saug-Tempo wächst moderat (0.9 -> 3.5 m/s) – bleibt langsam
+      const diskPrey = [];                                   // alle Beuten im Scheibenband (für den Tunnel)
       for (const other of Array.from(world.bodies)) {
         if (other === rec || other.dead || other.type === BLACKHOLE) continue;
         const p = other.body.translation();
@@ -456,25 +554,93 @@ async function main() {
           Sound.suck();
           continue;
         }
+        // Akkretionsscheiben-Band (auch wichtig für das Sog-Zielpunkt):
+        // Die Scheibe ist eine HORIZONTALE Ebene – Mitgliedschaft läuft
+        // über den horizontalen Abstand, nicht den 3D-Abstand.
+        const diskOuter = range * 0.85;
+        const dRad = Math.hypot(dx, dz) || 0.001;
+        const inDisk = dRad > mouth + 0.5 && dRad < diskOuter;
+
         // Langsames Ansaugen: sanftes Geschwindigkeitsfeld zum Loch hin.
-        // Zielpunkt leicht über dem Terrain, damit Blöcke nicht durch den
-        // Boden gesogen und vom Kollisions-Solver aus der Erde geschossen werden.
-        const surf = world.heightAt(Math.floor(p.x), Math.floor(p.z));
-        const ty = Math.max(bp.y, surf + 0.8);
+        // Die Scheibenebene liegt auf der Höhe des Lochs – aber NUR dort,
+        // wo das Terrain es zulässt (in der Grube). Oberhalb von festem
+        // Boden wird die Ebene auf die ECHTE aktuelle Terrainoberfläche
+        // (surfaceBelow, liest das Grid – Gruben eingeschlossen) angehoben:
+        // Materie kann nicht durch Felsen orbitieren, sie rutscht den
+        // Hang hinunter und fällt in die Grube. Ohne diesen Clamp drückt
+        // die Scheibe Blöcke auf hohem Boden 5 m in die Erde und die
+        // Reibung nagelt sie dort fest (Bug: Stein „frost" 8 m vom Loch).
+        const ci = Math.floor(p.x), ck = Math.floor(p.z);
+        const surfReal = world.surfaceBelow(ci, ck, Math.floor(p.y));
+        const planeY = Math.max(bp.y, surfReal + 0.6);
+        const ty = inDisk ? planeY : Math.max(bp.y, surfReal + 0.8);
         const tx = bp.x - p.x, tyy = ty - p.y, tz = bp.z - p.z;
         const td = Math.hypot(tx, tyy, tz) || 0.001;
         const nx = tx / td, ny = tyy / td, nz = tz / td;
         const v = other.body.linvel();
         const near = 1 - d / range;                          // näher = etwas schneller
         const target = speed * (0.55 + 0.45 * near);
-        const blend = 0.12;                                  // sanft -> langsamer Sog
+        const blend = 0.15;                                  // sanft -> langsamer Sog
+        // HARTE Geschwindigkeitsdeckelung: ohne sie würde die Sog-Kraft
+        // unten die Equilibriums-Geschwindigkeit auf target+3 m/s treiben
+        // (zu schnell, Slingshot-Gefahr). Mit dem Cap kriechen Blöcke im
+        // gemächlichen `target`-Tempo zum Loch – langsam, wie es sein soll.
+        let vx2 = v.x + (nx * target - v.x) * blend;
+        let vz2 = v.z + (nz * target - v.z) * blend;
+        const capH = target + 0.4;
+        const vh = Math.hypot(vx2, vz2);
+        if (vh > capH) { vx2 *= capH / vh; vz2 *= capH / vh; }
         other.body.setLinvel({
-          x: v.x + (nx * target - v.x) * blend,
+          x: vx2,
           y: v.y + (ny * target - v.y) * blend,
-          z: v.z + (nz * target - v.z) * blend,
+          z: vz2,
         }, true);
+        // Reibungs-Brecher: setLinvel allein besiegt die statische Reibung
+        // NICHT (Rapier löscht die tangentiale Geschwindigkeit im
+        // Vektor-Solver VOR der Positionsintegration – ein Block auf
+        // flachem Grund rührt sich dann nie). Deshalb drückt zusätzlich
+        // eine KRAFT horizontal Richtung Loch – klar über der Reibungs-
+        // Schwelle (μ·g ≈ 17 m/s²), damit auch BODENBlöcke losrutschen
+        // ("der Boden wird ins Loch gezogen"). Das Tempo bestimmt trotzdem
+        // der Deckel oben (langsamer Kriechgang, kein Slingshot).
+        const hdx = bp.x - p.x, hdz = bp.z - p.z;
+        const hd = Math.hypot(hdx, hdz) || 0.001;
+        const nearH = 1 - hd / range;
+        const pullA = 20 + 8 * nearH;
+        const m2 = other.body.mass();
+        other.body.addForce({ x: (hdx / hd) * pullA * m2, y: 0, z: (hdz / hd) * pullA * m2 }, true);
         // leichter Wirbel, wird mit dem Loch stärker
         other.body.addForce({ x: -nz * 1.5 * size, y: 0, z: nx * 1.5 * size }, true);
+
+        // Akkretionsscheibe: Körper im Band werden in die Scheibenebene
+        // (horizontale Ebene durch das Loch) gezogen, mit der Scheibe
+        // mitgedreht, ihre Rotation wird an die Scheibendrehung ausgerichtet
+        // (der Spin = der Drehimpuls aus dem, was es frisst), und sie werden
+        // radial LANGEZOHEN – Spaghettifizierung.
+        if (inDisk) {
+          const infl = 1 - dRad / diskOuter;
+          const m = other.body.mass();
+          // "slow": Block steht (fast) still – steht er auf dem Boden, ist er
+          // gegen einen Grubenrand festgekeilt. Die bekommt Vorrang beim
+          // Fressen (Boden unter ihr weg, siehe Tunnel-Sektion unten).
+          diskPrey.push({ p, d2: dRad * dRad, slow: Math.hypot(v.x, v.y, v.z) < 0.35 });
+          // 1) In die (terrain-korrigierte) Scheibenebene ziehen
+          const fy = -8.5 * (p.y - planeY) * infl;
+          // 2) Tangential: mit der Scheibe mitdrehen
+          const tgx = -dz / dRad, tgz = dx / dRad;
+          const ft = 3.4 * infl;
+          other.body.addForce({ x: tgx * ft * m, y: fy * m, z: tgz * ft * m }, true);
+          // 3) Rotation ausrichten: Y-Achse = Scheibendrehung (rec.spin)
+          const av = other.body.angvel();
+          other.body.setAngvel({
+            x: av.x * 0.8,
+            y: av.y + (rec.spin - av.y) * 0.2 * infl,
+            z: av.z * 0.8,
+          }, true);
+          // 4) Visuell: radiales Strecken (Spaghettifizierung)
+          other.stretch = 1 + 2.4 * infl * infl;
+          other.stretchAxis = { x: dx / dRad, z: dz / dRad };
+        }
       }
 
       // Boden-Sog: Das Loch frisst auch das Terrain in Mund-Reichweite –
@@ -509,6 +675,63 @@ async function main() {
           rec.absorbed += 0.05;
           particles.spawnSmall(best.i + 0.5, best.j + 0.5, best.k + 0.5, 0xb26bff, 3);
           if (Math.random() < 0.15) Sound.suck();
+        }
+        // Boden-Sog an Beuten (Round-Robin): Das Loch frisst Terrain weg,
+        // damit befestigte Blöcke frei werden – "der Boden wird ins Loch
+        // gezogen". Zwei Strategien:
+        //  A) FESTGEKEILTE Beute (steht still, z.B. an einem Grubenrand):
+        //     Vorrang! Der Boden UNTER ihr wird gefressen (1 Zelle/Runde) –
+        //     sie sackt ab, der Hang steilt sich, und der Sog zieht sie
+        //     hinunter. Funktioniert in jeder Terrainlage, kein Tunnelbau.
+        //  B) Alle anderen Beuten: Tunnel – bis zu 2 Zellen auf der Linie
+        //     Loch→Beute, rotierend durch die nächsten 6. Erodert jeden
+        //     Damm, der einer Beute den Weg versperrt.
+        if (diskPrey.length) {
+          diskPrey.sort((a, b2) => a.d2 - b2.d2);
+          const blocked = diskPrey.filter(pr => pr.slow);
+          let prey = null, under = false;
+          rec.tunnelIdx = (rec.tunnelIdx || 0) + 1;
+          if (blocked.length) {
+            prey = blocked[rec.tunnelIdx % blocked.length].p;
+            under = true;
+          } else {
+            prey = diskPrey[rec.tunnelIdx % Math.min(diskPrey.length, 6)].p;
+          }
+          const cands = [];
+          if (under) {
+            // 3×3-Fläche rund um die Beute, 2 Zellen unter ihrer Mitte
+            const pi = Math.floor(prey.x), pj = Math.floor(prey.y), pk = Math.floor(prey.z);
+            for (let di = -1; di <= 1; di++)
+              for (let dj = -2; dj <= 0; dj++)
+                for (let dk = -1; dk <= 1; dk++) {
+                  const i = pi + di, j = pj + dj, k = pk + dk;
+                  if (!inBounds(i, j, k) || j === 0) continue;
+                  if (world.grid[key(i, j, k)] !== GROUND) continue;
+                  cands.push({ i, j, k, es: Math.abs(j - (pj - 1)) });
+                }
+          } else {
+            for (let t = 0.08; t < 0.98; t += 0.06) {
+              const sx = bp.x + (prey.x - bp.x) * t;
+              const sy = bp.y + (prey.y - bp.y) * t;
+              const sz = bp.z + (prey.z - bp.z) * t;
+              const si = Math.floor(sx), sj = Math.floor(sy), sk = Math.floor(sz);
+              if (!inBounds(si, sj, sk) || sj === 0) continue;
+              if (world.grid[key(si, sj, sk)] !== GROUND) continue;
+              const ex = si + 0.5 - sx, ey = sj + 0.5 - sy, ez = sk + 0.5 - sz;
+              const es = ex * ex + ey * ey + ez * ez;
+              if (es < 1.5 * 1.5) cands.push({ i: si, j: sj, k: sk, es });
+            }
+          }
+          if (cands.length) {
+            cands.sort((a, b2) => a.es - b2.es);
+            const cut = cands.slice(0, under ? 1 : 2);
+            for (const c of cut) {
+              world.clearGround(c.i, c.j, c.k);
+              rec.absorbed += 0.02;
+            }
+            for (const c of cut) world.collapseColumn(c.i, c.k);
+            particles.spawnSmall(cut[0].i + 0.5, cut[0].j + 0.5, cut[0].k + 0.5, 0xb26bff, 2);
+          }
         }
       }
     }
@@ -1223,6 +1446,7 @@ async function main() {
       bodies: [...world.bodies].filter(r => !r.dead).map(r => {
         const p = r.body.translation(), v = r.body.linvel();
         return { type: r.type, x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
+                 absorbed: r.absorbed || 0,
                  aimDir: r.aimDir ? { x: r.aimDir.x, y: r.aimDir.y, z: r.aimDir.z } : null };
       }),
     };
@@ -1245,7 +1469,7 @@ async function main() {
     for (let i = 0; i < W; i++) for (let k = 0; k < D; k++) world.rebuildColumn(i, k);
     for (const b of snap.bodies)
       spawnBlock(b.type, Math.round(b.x - 0.5), Math.round(b.y - 0.5), Math.round(b.z - 0.5),
-        { x: b.vx, y: b.vy, z: b.vz }, { aimDir: b.aimDir });
+        { x: b.vx, y: b.vy, z: b.vz }, { aimDir: b.aimDir, absorbed: b.absorbed || 0 });
   }
   function doUndo() {
     const snap = undoStack.pop();
@@ -1361,6 +1585,8 @@ async function main() {
   }
 
   const dummy = new THREE.Object3D();
+  const _stV = new THREE.Vector3();
+  const _AXIS_X = new THREE.Vector3(1, 0, 0);
   function updateInstances() {
     recomputeAO();
     // Boden
@@ -1385,15 +1611,30 @@ async function main() {
 
     // Dynamische Blöcke
     for (const t of BODY_TYPES) {
+      if (t === BLACKHOLE) { meshes[t].count = 0; continue; } // eigenes Visual (Ereignishorizont)
       let m = 0;
       for (const rec of world.bodies) {
         if (rec.type !== t || rec.dead) continue;
         const p = rec.body.translation();
         const r = rec.body.rotation();
         dummy.position.set(p.x, p.y, p.z);
-        dummy.quaternion.set(r.x, r.y, r.z, r.w);
-        const sc = (t === BLACKHOLE) ? Math.min(3.2, 1 + rec.absorbed * 0.15) : 1;
-        dummy.scale.set(sc, sc, sc);
+        const s = rec.stretch || 1;
+        if (s > 1.03 && rec.stretchAxis) {
+          // Spaghettifizierung: lokale X-Achse radial ins Loch zeigen, strecken
+          _stV.set(rec.stretchAxis.x, 0, rec.stretchAxis.z);
+          if (_stV.lengthSq() > 1e-6) {
+            _stV.normalize();
+            dummy.quaternion.setFromUnitVectors(_AXIS_X, _stV);
+            const inv = 1 / Math.sqrt(s);
+            dummy.scale.set(s, inv, inv);
+          } else {
+            dummy.quaternion.set(r.x, r.y, r.z, r.w);
+            dummy.scale.set(1, 1, 1);
+          }
+        } else {
+          dummy.quaternion.set(r.x, r.y, r.z, r.w);
+          dummy.scale.set(1, 1, 1);
+        }
         dummy.updateMatrix();
         if (m < CAP_BODY) {
           meshes[t].setMatrixAt(m, dummy.matrix);
@@ -1422,14 +1663,35 @@ async function main() {
     barrelMesh.count = bn;
     barrelMesh.instanceMatrix.needsUpdate = true;
 
-    // Schwarze Löcher: pulsierender Glow
+    // Schwarze Löcher (Interstellar-Stil): schwarzer Ereignishorizont,
+    // Photonenring am Horizont, rotierende Akkretionsscheibe. Der Spin ist
+    // der Drehimpuls aus dem, was es gefressen hat – je mehr, desto
+    // schneller dreht sich die Scheibe (und richtet die Blöcke aus).
     const bt = performance.now() * 0.003;
     for (const rec of world.bodies) {
-      if (rec.type !== BLACKHOLE || rec.dead || !rec.sprite) continue;
+      if (rec.type !== BLACKHOLE || rec.dead || !rec.shadow) continue;
       const p = rec.body.translation();
+      rec.size = Math.min(3.2, 1 + rec.absorbed * 0.15);
+      rec.spin = 0.35 + rec.absorbed * 0.12;
+      const tNow = performance.now() / 1000;
+      rec.phase += rec.spin * Math.min(0.1, tNow - (rec._prevT || tNow));
+      rec._prevT = tNow;
+      // Ereignishorizont: schwarze Kugel
+      rec.shadow.position.set(p.x, p.y, p.z);
+      rec.shadow.scale.setScalar(0.6 * rec.size);
+      // Photonenring: direkt am Horizont, leicht pulsierend
+      rec.ring.position.set(p.x, p.y, p.z);
+      const rr = 1.08 * rec.size * (1 + 0.04 * Math.sin(bt * 2.0 + rec.phase));
+      rec.ring.scale.set(rr, rr, 1);
+      // Akkretionsscheibe: dreht mit dem Spin (Muster + Beaming-Hotspot
+      // orbitieren mit – wie beim Gaskreislauf um das Loch)
+      rec.dish.position.set(p.x, p.y, p.z);
+      rec.dish.scale.setScalar(rec.size);
+      rec.dish.rotation.y = rec.phase;
+      // Lila Atmosphären-Glow
+      const gs = (1.5 + rec.absorbed * 0.3) * (1 + 0.12 * Math.sin(bt + p.x));
       rec.sprite.position.set(p.x, p.y, p.z);
-      const s = (1.6 + rec.absorbed * 0.35) * (1 + 0.12 * Math.sin(bt + p.x));
-      rec.sprite.scale.set(s, s, 1);
+      rec.sprite.scale.set(gs, gs, 1);
     }
 
     // Wasser (Quellen + fließend)
