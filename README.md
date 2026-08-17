@@ -4,7 +4,10 @@ Ein ernstzunehmendes Physik-Spiel aus Würfeln. **Echte Physik** (Rapier), **ech
 null Konsequenzen. Die Welt ist ein zuckersüßes **Candy-Diorama** auf einem Podest –
 und du darfst sie komplett zerlegen.
 
-![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f)
+![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.1.0%20Pre--Alpha-ff5d8f)
+
+> 🐣 **Pre-Alpha v0.1** – alle Features sind real, aber erwartet Bugs, seltene Glitches
+> und gelegentliches Chaos über das Maß des guten Mischens.
 
 > ⚠️ **Kein einziger Fake-Feature.** Jede angegebene Fähigkeit ist real implementiert und per
 > automatisiertem Test (Playwright, siehe `test/`) verifiziert.

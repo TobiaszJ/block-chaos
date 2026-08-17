@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BLÖCK CHAOS – Voxel-Physik mit WebGPU</title>
+  <title>BLÖCK CHAOS – Voxel-Physik mit WebGPU (Pre-Alpha v0.1)</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -19,6 +19,7 @@
     <div class="panel">
       <h1>🧊 BLÖCK CHAOS</h1>
       <p class="sub">Ein ernstzunehmendes Physik-Spiel aus Würfeln. Echte Physik (Rapier), echtes WebGPU, null Konsequenzen.</p>
+      <p class="hint" style="text-align:center">Pre-Alpha v0.1 – erwartet Bugs, erwartet Chaos</p>
       <ul>
         <li><b>Linksklick</b> – Block zerschlagen</li>
         <li><b>Rechtsklick</b> – gewählten Block platzieren</li>
@@ -31,7 +32,7 @@
         <li><b>N</b> – Tag/Nacht umschalten &nbsp;·&nbsp; <b>P</b> – Screenshot speichern</li>
         <li><b>R</b> – von vorn</li>
       </ul>
-      <p class="hint">TNT gräbt tiefe Löcher. Die Kanone (7) feuert mit Rückstoß. Das Schwarze Loch (8) frisst Blöcke – zu viele, und es wird zur Supernova. 🌌</p>
+      <p class="hint">TNT gräbt tiefe Löcher. Die Kanone (7) feuert mit Rückstoß. Das Schwarze Loch (8) frisst langsam Blöcke – und wird mit jeder Beute größer. 🌌</p>
       <button id="start-btn">▶ Klicken zum Chaos</button>
     </div>
   </div>
@@ -40,7 +41,7 @@
     <div id="crosshair"></div>
 
     <div id="top-left">
-      <div id="title">🧊 BLÖCK CHAOS</div>
+      <div id="title">🧊 BLÖCK CHAOS <span style="opacity:.6;font-size:.7em">v0.1 Pre-Alpha</span></div>
       <div id="grav-badge">🌍 Gravitation: runter</div>
       <div id="dn-badge">☀️ Tag</div>
       <div id="stats"><span id="fps">–</span> FPS · <span id="blocks">0</span> Blöcke · <span id="watercount">0</span> Wassertropfen</div>

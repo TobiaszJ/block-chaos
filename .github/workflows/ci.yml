@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Chromium (Playwright + SwiftShader)
+        run: npx playwright install --with-deps chromium
+
+      - name: Start Vite dev server
+        run: |
+          nohup npx vite --port 5173 --strictPort >/tmp/vite.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:5173/ >/dev/null; then echo "Vite bereit"; exit 0; fi
+            sleep 1
+          done
+          echo "Vite ist nicht gestartet:"; cat /tmp/vite.log; exit 1
+
+      - name: Run test suites
+        run: npm test
