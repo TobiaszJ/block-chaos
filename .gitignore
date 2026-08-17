@@ -1,0 +1,14 @@
+# Abhängigkeiten
+node_modules/
+
+# Build-Ausgabe
+dist/
+
+# Logs & temporäre Dateien
+*.log
+*.tmp
+.DS_Store
+
+# Screenshot-Exporte
+shot-*.png
+*.screenshot.png

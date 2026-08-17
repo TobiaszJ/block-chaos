@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BLÖCK CHAOS – Voxel-Physik mit WebGPU</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="no-webgpu" class="overlay hidden">
+    <div class="panel">
+      <h1>😢 Kein WebGPU</h1>
+      <p>Dein Browser kann leider kein WebGPU. Nutze z. B. einen aktuellen Chrome/Edge
+         (bei Linux: <code>--enable-unsafe-webgpu</code>).</p>
+    </div>
+  </div>
+
+  <div id="start-overlay" class="overlay">
+    <div class="panel">
+      <h1>🧊 BLÖCK CHAOS</h1>
+      <p class="sub">Ein ernstzunehmendes Physik-Spiel aus Würfeln. Echte Physik (Rapier), echtes WebGPU, null Konsequenzen.</p>
+      <ul>
+        <li><b>Linksklick</b> – Block zerschlagen</li>
+        <li><b>Rechtsklick</b> – gewählten Block platzieren</li>
+        <li><b>1–0</b> – Block wählen (Ballon = 9, Kette = 0) &nbsp;·&nbsp; <b>WASD + Leertaste/Shift</b> – fliegen</li>
+        <li><b>T</b> – Windböe fliegt dir entgegen &nbsp;·&nbsp; <b>G</b> – 8 Sekunden Regen</li>
+        <li><b>E</b> – Block in Kamera-Richtung wegknallen</li>
+        <li><b>L</b> (gedrückt halten) – <span style="color:#ff5570">☢ LASER</span>, schmilzt alles, was dir im Weg steht</li>
+        <li><b>X</b> – Gravitation umdrehen (das ist keine Metapher)</li>
+        <li><b>B</b> (halten) – <span style="color:#7fd4ff">🐌 Zeitlupe</span> &nbsp;·&nbsp; <b>C</b> – alle Kanonen feuern &nbsp;·&nbsp; <b>M</b> – Ton an/aus</li>
+        <li><b>N</b> – Tag/Nacht umschalten &nbsp;·&nbsp; <b>P</b> – Screenshot speichern</li>
+        <li><b>R</b> – von vorn</li>
+      </ul>
+      <p class="hint">TNT gräbt tiefe Löcher. Die Kanone (7) feuert mit Rückstoß. Das Schwarze Loch (8) frisst Blöcke – zu viele, und es wird zur Supernova. 🌌</p>
+      <button id="start-btn">▶ Klicken zum Chaos</button>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+
+    <div id="top-left">
+      <div id="title">🧊 BLÖCK CHAOS</div>
+      <div id="grav-badge">🌍 Gravitation: runter</div>
+      <div id="dn-badge">☀️ Tag</div>
+      <div id="stats"><span id="fps">–</span> FPS · <span id="blocks">0</span> Blöcke · <span id="watercount">0</span> Wassertropfen</div>
+    </div>
+
+    <div id="top-right">
+      <button id="btn-save" class="hudbtn" title="Strg+S">💾 Speichern</button>
+      <button id="btn-load" class="hudbtn" title="Strg+L">📂 Laden</button>
+      <button id="btn-new"  class="hudbtn" title="Frise Insel">🏝️ Neue Insel</button>
+      <div id="undo-hint">↩️ <span id="undocount">0</span>&nbsp;(Strg+Z)</div>
+    </div>
+
+    <div id="hotbar"></div>
+
+    <div id="bottom-left">
+      LMB brechen/feuern · RMB platzieren · E Knallen · L Laser · N Tag/Nacht · P Screenshot · M Ton
+    </div>
+
+    <div id="slowmo">🐌 ZEITLUPE</div>
+    <div id="mute-badge" class="hidden">🔇 Ton aus (M)</div>
+
+    <div id="toast"></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
