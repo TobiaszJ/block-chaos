@@ -4,10 +4,12 @@ Ein ernstzunehmendes Physik-Spiel aus Würfeln. **Echte Physik** (Rapier), **ech
 null Konsequenzen. Die Welt ist ein zuckersüßes **Candy-Diorama** auf einem Podest –
 und du darfst sie komplett zerlegen.
 
-![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.1.0%20Pre--Alpha-ff5d8f)
+![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.2.0%20Alpha-ff5d8f)
 
-> 🐣 **Pre-Alpha v0.1** – alle Features sind real, aber erwartet Bugs, seltene Glitches
-> und gelegentliches Chaos über das Maß des guten Mischens.
+> 🐣 **Alpha v0.2** – Alle Features sind real. **Neu: Schwarze Löcher finden
+> einander** – sie ziehen sich an und **verschmelzen** zum größeren (mit
+> Schockwelle, Flash und Screen-Shake), dazu ein größerer Linsen-Effekt
+> (senkrechter Photonen-Halo). Erwartet weiterhin das übliche Maß an Chaos.
 
 > ⚠️ **Kein einziger Fake-Feature.** Jede angegebene Fähigkeit ist real implementiert und per
 > automatisiertem Test (Playwright, siehe `test/`) verifiziert.
@@ -80,8 +82,12 @@ npm run preview   # → dist/ lokal testen
 - **Gravitation-Flip** (X) – alles fällt nach oben.
 - **Kette** – zwei Blöcke werden per *Revolute-Joint* verbunden und schwingen.
 - **Ballon** – echtes Auftriebs-Verhalten (schwimmt hoch, platzt in der Höhe).
-- **Schwarzes Loch** – saugt langsam benachbarte Blöcke an und **wächst**
-  mit jeder Beute (greift weiter, saugt stärker, Mund wird größer). Explodiert nie.
+- **Schwarze Löcher** – saugen langsam benachbarte Blöcke an und **wachsen**
+  mit jeder Beute (greifen weiter, saugen stärker, Mund wird größer). Explodieren nie.
+  **Mehrere Löcher finden einander**: Sie ziehen sich gegenseitig an und
+  **verschmelzen**, wenn sich ihre Horizonte überlappen – das größere frisst das
+  kleinere (Schockwelle + Flash + Screen-Shake). Ein senkrechter **Photonen-Halo**
+  (zwei sich kreuzende Ringe) liefert den großen Linsen-Effekt à la Gargantua.
 - **Krater ohne Treibgut** – Explosionen graben echte Löcher, lassen aber keine
   Blöcke schwebend in der Luft zurück (schwebende Überhänge werden entfernt).
 - **Kanone** – feuert mit echtem Rückstoß.
@@ -150,6 +156,7 @@ src/
 test/
   smoke.mjs   Init, Explosion, Grav-Flip, Push, TNT
   chaos.mjs   Kanone, Schwarzes Loch (langsam + wächst, keine Explosion), Zeitlupe
+  bh2.mjs     Schwarze-Löcher-Verschmelzung (zwei Löcher, drittes bleibt unversehrt)
   toys.mjs    Ballon, Kette, Wind, Regen
   atmo.mjs    Tag/Nacht, Screenshot, Ziel-Highlight, AO
   comf.mjs    Undo, Save/Load, Neue Insel

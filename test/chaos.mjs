@@ -150,8 +150,18 @@ const r = await page.evaluate(async () => {
   }
   const bps = bh.body.translation();
   const sp = g.spawnBlock(3, Math.round(bps.x + 2.5), Math.max(1, Math.round(bps.y)), Math.round(bps.z), null, {});
-  await sleep(600);
-  const stretch = sp.dead ? 99 : (sp.stretch || 1);
+  // MAXIMUM über die Zeitfenster-Proben (statt Einzel-Snapshot): Der Stein
+  // startet knapp am Rand der Scheibenzone – je nach Timing (und Größe
+  // des Lochs) liegt er für Momente in der Lücke zwischen Mund und Scheibe
+  // (dort gilt kein Stretch). Das Maximum über ~1,4 s ist deterministischer;
+  // wird der Stein aufgefressen, zählt das ebenfalls (99).
+  let maxStretch = 0;
+  for (let s = 0; s < 12; s++) {
+    await sleep(120);
+    if (sp.dead) { maxStretch = 99; break; }
+    maxStretch = Math.max(maxStretch, sp.stretch || 1);
+  }
+  const stretch = maxStretch;
   out.bh2 = {
     vis: bhVis, spin0: +spin0.toFixed(2), spin1: +spin1.toFixed(2),
     spinUp: spin1 > spin0 + 0.05, plane, alignY,

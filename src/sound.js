@@ -122,6 +122,12 @@ export const Sound = {
     if (!ok('suck', 120)) return;
     tone({ freq: 240, end: 35, dur: 0.35, type: 'sawtooth', gain: 0.22 });
   },
+  merge() { // Zwei Schwarze Löcher verschmelzen: tiefer Bums + Whoosh
+    if (!ok('merge', 200)) return;
+    tone({ freq: 70, end: 20, dur: 1.1, type: 'sine', gain: 0.95 });
+    noise({ dur: 1.3, gain: 0.45, filter: 240, filterEnd: 55, q: 1.2 });
+    tone({ freq: 300, end: 900, dur: 0.6, type: 'sawtooth', gain: 0.1 });
+  },
   water() { // Quelle aktiviert
     if (!ok('water', 200)) return;
     tone({ freq: 300, end: 420, dur: 0.18, type: 'sine', gain: 0.2 });

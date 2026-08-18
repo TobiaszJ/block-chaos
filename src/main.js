@@ -350,6 +350,44 @@ async function main() {
     map: bhDiskTex, side: THREE.DoubleSide, depthWrite: false,
     blending: THREE.AdditiveBlending, fog: false,
   });
+  // Größerer Linsen-Effekt: zwei SENKRECHTE Photonen-Halos (XY- und
+  // ZY-Ebene, also senkrecht zur Akkretionsscheibe), die sich kreuzen –
+  // der gekrümmte Lichtkranz um den Horizont, aus jeder Kamerarichtung
+  // sichtbar (wie bei Gargantua). Geteilte Geometrie/Textur, pro Loch
+  // nur die Meshes.
+  const bhHaloGeom = new THREE.RingGeometry(1.02, 1.6, 96, 1);
+  const photonHaloTex = (() => {
+    const S = 256, C = S / 2, R_OUT = 1.6;
+    const PX = C / R_OUT; // Pixel pro Lokaleinheit (UVs planar über R_OUT)
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    const img = g.createImageData(S, S);
+    const sstep = (a, b, x) => { x = Math.min(1, Math.max(0, (x - a) / (b - a))); return x * x * (3 - 2 * x); };
+    for (let py = 0; py < S; py++) {
+      for (let px = 0; px < S; px++) {
+        const x = (px - C + 0.5) / PX;
+        const y = (C - py + 0.5) / PX;
+        const r = Math.hypot(x, y);
+        const i = (py * S + px) * 4;
+        if (r < 0.9 || r > R_OUT) { img.data[i + 3] = 0; continue; }
+        const t = (r - 0.9) / (R_OUT - 0.9);
+        const bright = (1 - t) * (1 - t) * 0.9; // heißer innerer Rand, auslaufend
+        img.data[i]     = 255 * bright;
+        img.data[i + 1] = 235 * bright;
+        img.data[i + 2] = 205 * bright;
+        img.data[i + 3] = 255 * bright;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  })();
+  const bhHaloMat = new THREE.MeshBasicMaterial({
+    map: photonHaloTex, side: THREE.DoubleSide, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false,
+  });
 
   // ---------- Dynamische Blöcke ----------
   const MAX_BODIES = 400;
@@ -396,6 +434,11 @@ async function main() {
         blending: THREE.AdditiveBlending,
       }));
       scene.add(rec.sprite);
+      // Senkrechte Photonen-Halos (Linsen-Effekt): zwei kreuzende Ringe
+      rec.halo1 = new THREE.Mesh(bhHaloGeom, bhHaloMat);
+      rec.halo2 = new THREE.Mesh(bhHaloGeom, bhHaloMat);
+      rec.halo2.rotation.y = Math.PI / 2; // senkrecht zu halo1
+      scene.add(rec.halo1, rec.halo2);
     }
     if (opts.absorbed) rec.absorbed = opts.absorbed; // Restore aus Save
     world.bodies.add(rec);
@@ -430,6 +473,8 @@ async function main() {
     if (rec.shadow) { scene.remove(rec.shadow); rec.shadow = null; }
     if (rec.ring) { scene.remove(rec.ring); rec.ring.material.dispose(); rec.ring = null; }
     if (rec.dish) { scene.remove(rec.dish); rec.dish.material.dispose(); rec.dish = null; }
+    if (rec.halo1) { scene.remove(rec.halo1); rec.halo1 = null; } // geteiltes Material
+    if (rec.halo2) { scene.remove(rec.halo2); rec.halo2 = null; }
     removeJointsOf(rec);
     if (inStep) pendingRemove.add(rec);
     else world.physicsWorld.removeRigidBody(rec.body);
@@ -734,6 +779,66 @@ async function main() {
           }
         }
       }
+
+      // Schwarze Löcher finden einander: Sie ziehen sich gegenseitig an
+      // (langsamer Kriechgang, wie die Beute) und VERSCHMELZEN, wenn sich
+      // ihre Horizonte überlappen – das größere frisst das kleinere und
+      // wächst (Schockwelle, Flash, Screen-Shake). Jedes Paar wird genau
+      // ein Mal pro Step verarbeitet (Handle-Vergleich).
+      for (const b of Array.from(world.bodies)) {
+        if (b === rec || b.dead || b.type !== BLACKHOLE) continue;
+        if (b.body.handle <= rec.body.handle) continue;
+        const pb = b.body.translation();
+        const dx = pb.x - bp.x, dy = pb.y - bp.y, dz = pb.z - bp.z;
+        const dRad = Math.hypot(dx, dz);
+        const sizeB = Math.min(3.2, 1 + b.absorbed * 0.15);
+        const mouthB = 0.5 + sizeB * 0.45;
+        // Verschmelzen: Horizonten überlappen (horizontale Distanz – die
+        // Grubentiefe kann je nach Terrain um bis zu ~3 Zellen abweichen,
+        // deshalb nur eine vertikale Toleranz statt harter 3D-Abstands).
+        if (dRad < mouth + mouthB && Math.abs(dy) < 3) {
+          const [sur, vic] = rec.absorbed >= b.absorbed ? [rec, b] : [b, rec];
+          const sp = sur.body.translation();
+          sur.absorbed += vic.absorbed + 2; // Wachstum + extra Wumms
+          sur.size = Math.min(3.2, 1 + sur.absorbed * 0.15);
+          sur.spin = 0.35 + sur.absorbed * 0.12;
+          particles.spawnBurst(sp.x, sp.y, sp.z, 90,
+            [{ r: 1.0, g: 0.85, b: 1.0 }, { r: 0.69, g: 0.35, b: 1.0 }, { r: 1.0, g: 0.6, b: 0.9 }], 7, 1.2);
+          shake = Math.min(0.9, shake + 0.55);
+          flashA = Math.min(0.9, flashA + 0.7);
+          Sound.merge();
+          toast('🌌 Verschmelzung! Zwei Schwarze Löcher wurden zu einem größeren.');
+          removeBody(vic);
+          if (rec.dead) break; // wir sind die Beute – Rest des Loops überspringen
+          continue;
+        }
+        // Gegenseitiger Sog: beide kriechen aufeinander zu. Wie bei der
+        // Beute: setLinvel allein verliert gegen die statische Reibung
+        // (Löcher im eigenen Kraterboden), deshalb zusätzlich eine Kraft
+        // Richtung Partner klar über der Reibungsschwelle (μ·g·m ≈ 39 N).
+        const rMax = Math.max(range, 6 + sizeB * 3);
+        if (dRad > rMax) continue;
+        const near = 1 - dRad / rMax;
+        const target = 0.4 + 0.5 * near + (size - 1) * 0.35; // Kriechgang
+        const d3 = Math.hypot(dx, dy, dz) || 0.001;
+        const nx = dx / d3, ny = dy / d3, nz = dz / d3; // rec -> b
+        const blend = 0.12;
+        const pullA = 45 + 20 * near;
+        rec.body.addForce({ x: nx * pullA * rec.body.mass(), y: 0, z: nz * pullA * rec.body.mass() }, true);
+        b.body.addForce({ x: -nx * pullA * b.body.mass(), y: 0, z: -nz * pullA * b.body.mass() }, true);
+        const nudge = (self, s) => {
+          const v = self.body.linvel();
+          let vx2 = v.x + (nx * s * target - v.x) * blend;
+          let vy2 = v.y + (ny * s * target - v.y) * blend;
+          let vz2 = v.z + (nz * s * target - v.z) * blend;
+          const vh = Math.hypot(vx2, vy2, vz2);
+          const cap = target + 0.4;
+          if (vh > cap) { const f = cap / vh; vx2 *= f; vy2 *= f; vz2 *= f; }
+          self.body.setLinvel({ x: vx2, y: vy2, z: vz2 }, true);
+        };
+        nudge(rec, 1);
+        nudge(b, -1);
+      }
     }
 
     // Ballons: Auftrieb + sanftes Schwenken – oben platzen sie
@@ -966,7 +1071,7 @@ async function main() {
     }
     if (selected === BLACKHOLE) {
       spawnBlock(BLACKHOLE, i, j, k, null);
-      toast('🌌 Schwarzes Loch entlassen. Es ist hungrig – und wird mit jeder Beute größer.');
+      toast('🌌 Schwarzes Loch entlassen. Es frisst hungrig – und findet jedes andere Loch in der Nähe.');
       return;
     }
     spawnBlock(selected, i, j, k);
@@ -1692,6 +1797,14 @@ async function main() {
       const gs = (1.5 + rec.absorbed * 0.3) * (1 + 0.12 * Math.sin(bt + p.x));
       rec.sprite.position.set(p.x, p.y, p.z);
       rec.sprite.scale.set(gs, gs, 1);
+      // Senkrechte Photonen-Halos: mit dem Loch, leicht pulsierend
+      if (rec.halo1 && rec.halo2) {
+        const hs = rec.size * (1 + 0.03 * Math.sin(bt * 2.3 + rec.phase * 2));
+        rec.halo1.position.set(p.x, p.y, p.z);
+        rec.halo2.position.set(p.x, p.y, p.z);
+        rec.halo1.scale.setScalar(hs);
+        rec.halo2.scale.setScalar(hs);
+      }
     }
 
     // Wasser (Quellen + fließend)

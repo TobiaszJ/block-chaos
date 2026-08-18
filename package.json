@@ -1,10 +1,10 @@
 {
   "name": "voxel-physics",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BLÖCK CHAOS – witziges Voxel-Physik-Diorama auf WebGPU (Pre-Alpha)",
   "main": "index.js",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/chaos.mjs && node test/toys.mjs && node test/atmo.mjs && node test/comf.mjs && node test/touch.mjs",
+    "test": "node test/smoke.mjs && node test/chaos.mjs && node test/toys.mjs && node test/atmo.mjs && node test/comf.mjs && node test/touch.mjs && node test/bh2.mjs",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
