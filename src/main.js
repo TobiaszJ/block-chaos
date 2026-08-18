@@ -3,7 +3,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import { World, W, H, D, key, decode, inBounds, CG } from './world.js';
-import { Water } from './water.js';
+import { Water, MAX_WATER } from './water.js';
 import { Particles } from './particles.js';
 import {
   AIR, GROUND, WOOD, STONE, ICE, GUMMY, TNT, WATER_SRC, CANNON, BLACKHOLE,
@@ -392,6 +392,69 @@ async function main() {
   // ---------- Dynamische Blöcke ----------
   const MAX_BODIES = 400;
   const bodyOrder = []; // FIFO für Aufräumen, wenn's voll ist
+  // ---------- Adaptives Element-Budget (Crash-Schutz) ----------
+  // Das System misst seine eigene FPS (0,5s-Fenster) und senkt bei
+  // Atemnot (<25 fps) das Objekt-/Wasser-Budget: Die ältesten Blöcke
+  // "puffen" weg, altes Wasser verdunstet (🐢 im HUD). Hat es wieder
+  // Luft (≥55 fps für ~2s), wächst das Budget bis zur harten Grenze
+  // zurück (MAX_BODIES/MAX_WATER = was die GPU-Buffer fassen). So
+  // übersteht auch ein schwaches Gerät das Chaos, statt einzufrieren.
+  const BUDGET = {
+    bodyMax: MAX_BODIES, bodyMin: 30, body: MAX_BODIES,
+    waterMax: MAX_WATER, waterMin: 150, water: MAX_WATER,
+    goodStreak: 0, lastCut: 0, lastToast: 0,
+  };
+  const bootT = performance.now();
+  function cutElements() {
+    let cut = 0;
+    // Älteste zuerst (FIFO) – genau das macht auch die harte Obergrenze,
+    // das adaptive Budget zieht es nur früher und in kleinen Schritten an.
+    while (world.bodies.size > BUDGET.body) {
+      const rec = bodyOrder[0];
+      if (!rec) break; // bodyOrder leer → kein (Endlos-)Loop, Inkonsistenz ignorieren
+      if (rec.dead) { bodyOrder.shift(); continue; }
+      const p = rec.body.translation();
+      // kleiner "Puff", damit der Spieler sieht, warum der Block weg ist
+      particles.spawn(p.x, p.y, p.z, 0, 0.6, 0, 0.6, 0.6, 0.7, 0.5);
+      removeBody(rec);
+      cut++;
+    }
+    water.budget = BUDGET.water;
+    const rw = water.trimTo(BUDGET.water);
+    if ((cut > 0 || rw > 0) && performance.now() - BUDGET.lastToast > 4000) {
+      BUDGET.lastToast = performance.now();
+      const what = [];
+      if (cut > 0) what.push(cut + (cut === 1 ? ' Objekt' : ' Objekte'));
+      if (rw > 0) what.push(rw + (rw === 1 ? ' Wasserkzelle' : ' Wasserkzellen'));
+      toast('🐢 System hat die Luft raus – ' + what.join(' + ') + ' entfernt (Budget ' + BUDGET.body + ' Objekte).');
+    }
+    return cut;
+  }
+  function adaptBudget(fps) {
+    // Shader-Warmup am Start ist kein Leistungssignal → nicht darauf reagieren
+    if (performance.now() - bootT < 5000) return;
+    if (fps > 0 && fps < 25) {
+      BUDGET.goodStreak = 0;
+      // nicht panisch: max. ein Cut pro 1,5s (der 250ms-Notbrems-Check
+      // im Loop reagiert auf echte Einfrieren ohnehin sofort)
+      if (performance.now() - BUDGET.lastCut < 1500) return;
+      BUDGET.lastCut = performance.now();
+      if (BUDGET.body > BUDGET.bodyMin || BUDGET.water > BUDGET.waterMin) {
+        BUDGET.body = Math.max(BUDGET.bodyMin, Math.round(BUDGET.body * 0.7));
+        BUDGET.water = Math.max(BUDGET.waterMin, Math.round(BUDGET.water * 0.7));
+        cutElements();
+      }
+    } else if (fps >= 55) {
+      BUDGET.goodStreak++;
+      if (BUDGET.goodStreak >= 4) { // ~2s stabile Luft → langsam hochbauen
+        BUDGET.goodStreak = 0;
+        if (BUDGET.body < BUDGET.bodyMax) BUDGET.body = Math.min(BUDGET.bodyMax, Math.round(BUDGET.body * 1.25));
+        if (BUDGET.water < BUDGET.waterMax) BUDGET.water = Math.min(BUDGET.waterMax, Math.round(BUDGET.water * 1.25));
+      }
+    } else {
+      BUDGET.goodStreak = 0; // Zwischenzone (25–55): nichts tun (Hysterese)
+    }
+  }
   function spawnBlock(typeId, i, j, k, vel = null, opts = {}) {
     const def = BLOCKS[typeId];
     const body = world.physicsWorld.createRigidBody(
@@ -1048,8 +1111,8 @@ async function main() {
       toast('Wasserquelle aktiv – jetzt wird’s nass 💧');
       return;
     }
-    if (world.bodies.size >= MAX_BODIES) {
-      // Altem Block den Garaus tun, damit’s nie „voll“ wird
+    if (world.bodies.size >= BUDGET.body) {
+      // Altem Block den Garaus, damit's nie „voll" wird (adaptives Budget)
       removeBody(bodyOrder[0]);
     }
     if (selected === CHAIN) {
@@ -1216,7 +1279,7 @@ async function main() {
     const p = rec.body.translation();
     const dir = rec.aimDir || { x: 0, y: 1, z: 0 };
     const ammo = cannonAmmoType();
-    if (world.bodies.size >= MAX_BODIES) removeBody(bodyOrder[0]);
+    if (world.bodies.size >= BUDGET.body) removeBody(bodyOrder[0]);
     const v = 26;
     spawnBlock(ammo,
       Math.min(W - 1, Math.max(0, Math.floor(p.x + dir.x * 1.3))),
@@ -1585,6 +1648,7 @@ async function main() {
     world.grid.set(snap.grid);
     world.gridDirty = true;
     water.cells = new Map(snap.water);
+    water.refreshTotal();
     water.dirty = true;
     world.waterSources = new Set(snap.sources);
     for (let i = 0; i < W; i++) for (let k = 0; k < D; k++) world.rebuildColumn(i, k);
@@ -1642,7 +1706,7 @@ async function main() {
     flushPendingRemove();
     world.grid.fill(AIR);
     world.waterSources.clear();
-    water.cells.clear();
+    water.clear();
     water.dirty = true;
     world.setGravityFlipped(false);
     world.generateTerrain();
@@ -2010,6 +2074,7 @@ async function main() {
     }
 
     // Physik (festes Zeitraster, in Zeitlupe 4× langsamer)
+    water.budget = BUDGET.water; // dynamisches Wasser-Budget (Regen/Quellen lesen es)
     const t0 = performance.now();
     acc += dt * timeScale;
     let n = 0;
@@ -2019,6 +2084,20 @@ async function main() {
     // brauchen. Lieber fällt die Sim dann ein Ticken hinterher.
     if (n >= 5) acc = 0;
     const t1 = performance.now();
+    // Crash-Gürtel: EIN Physik-Frame kostet schon mehr als ein Viertel-
+    // Sekunde → Budget sofort halbieren (reagiert schneller als das
+    // 0,5s-FPS-Metern). acc=0: dieser Frame hat genug geleistet.
+    if (t1 - t0 > 250 && (BUDGET.body > BUDGET.bodyMin || BUDGET.water > BUDGET.waterMin)) {
+      BUDGET.lastCut = performance.now();
+      BUDGET.goodStreak = 0;
+      BUDGET.body = Math.max(BUDGET.bodyMin, Math.round(BUDGET.body * 0.5));
+      BUDGET.water = Math.max(BUDGET.waterMin, Math.round(BUDGET.water * 0.5));
+      cutElements();
+      acc = 0;
+    }
+    // Dauereinhaltung: Das Budget darf nie übertroffen werden (mehrere
+    // Kanonen können in einem Frame feuern; der Spawn-Cut deckt nur eine)
+    if (world.bodies.size > BUDGET.body) cutElements();
     // Wasser-CA: ~20 Hz in Welt-Zeit (folgt der Zeitlupe)
     waterAcc += dt * timeScale;
     if (waterAcc >= 1 / 20) { waterAcc %= 1 / 20; water.tick(); }
@@ -2069,10 +2148,14 @@ async function main() {
     // HUD
     fpsFrames++; fpsTime += dt;
     if (fpsTime >= 0.5) {
-      document.getElementById('fps').textContent = Math.round(fpsFrames / fpsTime);
-      document.getElementById('blocks').textContent = world.bodies.size;
-      document.getElementById('watercount').textContent = water.cells.size;
+      const fps = fpsFrames / fpsTime;
+      document.getElementById('fps').textContent = Math.round(fps);
+      // 🐢 = adaptives Budget arbeitet (System ist am Limit)
+      const limited = BUDGET.body < BUDGET.bodyMax || BUDGET.water < BUDGET.waterMax;
+      document.getElementById('blocks').textContent = world.bodies.size + (limited ? ' 🐢' : '');
+      document.getElementById('watercount').textContent = water.cells.size + (limited ? ' 🐢' : '');
       fpsFrames = 0; fpsTime = 0;
+      adaptBudget(fps); // adaptives Element-Budget (Crash-Schutz)
     }
 
     renderer.render(scene, camera);
@@ -2083,6 +2166,7 @@ async function main() {
   // Konsolen-Spielzeug (und Smoke-Tests): von dort aus kann man alles antesten
   window.__game = {
     world, water, particles, renderer, scene, camera, meshes, THREE, perf,
+    budget: BUDGET, cutElements, adaptBudget,
     spawnBlock, removeBody, explodeAt, flipGravity,
     doBreak, doPlace, doPush, selectSlot, aim, fireLaser, laserGroup,
     fireCannon, fireAllCannons, setSlowMo, sound: Sound, gustWind, startRain, attachChainJoint,

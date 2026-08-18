@@ -17,13 +17,14 @@ const r = await page.evaluate(async () => {
   const out = {};
   const bhCount = () => { let n = 0; for (const b of g.world.bodies) if (b.type === 9 && !b.dead) n++; return n; };
 
-  // Zwei Löcher 6 m auseinander auf GLEICHER Terrainhöhe (8,24)/(14,24) –
-  // die Grubentiefe hängt von der Ursprungshöhe ab, gleiche Höhe heißt
-  // gleiche Grube. Plus ein weit entferntes drittes Loch (42,42), das in
-  // Ruhe bleiben soll (>24 m von beiden Startpositionen).
+  // Zwei Löcher 6 m auseinander auf fast gleicher Terrainhöhe (24,16)/(30,16) –
+  // WICHTIG: ≥23 m von der TNT-Reihe (6,26–28) entfernt, denn ein geschleudertes
+  // Beute-Objekt könnte sie zünden und die Explosion (R=3.5) das Loch töten.
+  // Plus ein weit entferntes drittes Loch (42,42), das in Ruhe bleiben soll
+  // (>24 m von beiden Startpositionen).
   const h = g.world.heightAt;
-  const a = g.spawnBlock(9, 8, h(8, 24), 24);
-  const b = g.spawnBlock(9, 14, h(14, 24), 24);
+  const a = g.spawnBlock(9, 24, h(24, 16), 16);
+  const b = g.spawnBlock(9, 30, h(30, 16), 16);
   const far = g.spawnBlock(9, 42, h(42, 42), 42);
 
   // Warten, bis a+b verschmolzen sind (drei -> zwei Löcher)

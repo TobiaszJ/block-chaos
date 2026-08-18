@@ -63,8 +63,46 @@ await page.evaluate(() => {
 await page.waitForTimeout(10000);
 const chaos = await read('chaos', 10);
 
+// Phase 3: Adaptives Budget – erst den Ist-Zustand nach dem Chaos lesen
+// (langsame Systeme müssen einen Automaten-Cut zeigen, schnelle nicht),
+// dann den Mechanismus deterministisch prüfen: Budget erzwingen →
+// Objekte/Wasser müssen wirklich geschnitten werden.
+const b = await page.evaluate(() => {
+  const g = window.__game;
+  return {
+    body: g.budget.body, water: g.budget.water,
+    bodyMax: g.budget.bodyMax, waterMax: g.budget.waterMax,
+    bodiesFits: g.world.bodies.size <= g.budget.body,
+    waterFits: g.water.totalAmount() <= g.budget.water + 1,
+    notOverHardCap: g.budget.body <= g.budget.bodyMax && g.budget.water <= g.budget.waterMax,
+  };
+});
+console.log('BUDGET nach Chaos:', JSON.stringify({ body: b.body + '/' + b.bodyMax, water: b.water + '/' + b.waterMax }));
+
+const mech = await page.evaluate(() => {
+  const g = window.__game;
+  const bodiesBefore = g.world.bodies.size;
+  const waterBefore = g.water.totalAmount();
+  let cut = 0, bodiesAfter = bodiesBefore;
+  if (bodiesBefore > 5) {
+    // 1) Objekt-Budget erzwingen → cutElements muss die Szene daran bringen
+    g.budget.body = Math.min(20, bodiesBefore - 1);
+    cut = g.cutElements();
+    bodiesAfter = g.world.bodies.size;
+    g.budget.body = g.budget.bodyMax; // wieder freigeben
+  }
+  // 2) Wasser-Budget erzwingen → älteste Zellen müssen verdunsten
+  if (waterBefore > 20) {
+    g.budget.water = Math.floor(waterBefore / 2);
+    g.water.trimTo(g.budget.water);
+    g.budget.water = g.budget.waterMax;
+  }
+  return { bodiesBefore, cut, bodiesAfter, waterBefore, waterAfter: g.water.totalAmount() };
+});
+
 console.log('QUIET  (alles schlafend):', JSON.stringify(quiet));
 console.log('CHAOS  (Löcher + 80 Steine + Regen):', JSON.stringify(chaos));
+console.log('CUT-MECHANIK:', JSON.stringify(mech));
 
 // popErrorScope/createBuffer = bekannte SwiftShader-Artefakte (keine Spiel-Bugs)
 const real = errors.filter(e => !e.includes('popErrorScope') && !e.includes('createBuffer'));
@@ -84,7 +122,22 @@ ok(quiet.inst < chaos.inst * 0.6,
   `Ruhe-Budget deutlich kleiner (×${quiet.inst / Math.max(chaos.inst, 0.01)} < ×0.6)`);
 ok(quiet.ao < chaos.ao,
   `AO-Rekomputationen: Ruhe (${quiet.ao}/s) < Chaos (${chaos.ao}/s)`);
-ok(real.length === 0, 'keine Runtime-Fehler');
+// Adaptives Budget (Crash-Schutz v0.4): Auf einem langsamen System
+// (fps < 25) muss das Budget automatisch unter die harte Grenze fallen.
+// Auf einem schnellen System ist dieser Check ein No-Op – der Cut-Mechanismus
+// wird unten ohnehin deterministisch geprüft.
+ok(chaos.fps >= 25 || (b.body < b.bodyMax || b.water < b.waterMax),
+  `Adaptives Budget: langsames System (${chaos.fps} fps) → Budget gesenkt (${b.body}/${b.bodyMax} Objekte, ${b.water}/${b.waterMax} Wasser)`);
+ok(b.bodiesFits, 'Invariante: Objektzahl ≤ Budget');
+ok(b.waterFits, 'Invariante: Wasser-Bestand ≤ Budget');
+ok(b.notOverHardCap, 'Invariante: Budget ≤ harte Obergrenze');
+ok(mech.bodiesBefore <= 5 || (mech.bodiesAfter <= 20 && mech.cut > 0),
+  `Cut-Mechanik: Objekte auf Budget geschnitten (${mech.bodiesBefore} → ${mech.bodiesAfter}, ${mech.cut} entfernt)`);
+if (mech.waterBefore > 20) {
+  ok(mech.waterAfter < mech.waterBefore && mech.waterAfter <= mech.waterBefore / 2 + 10,
+    `Cut-Mechanik: Wasser auf Budget geschnitten (${mech.waterBefore} → ${mech.waterAfter})`);
+}
+ok(real.length === 0, 'keine Runtime-Fehler (Crash-Schutz funktioniert)');
 await browser.close();
 if (fails > 0) { console.error(`\nPERF: ${fails} fehlgeschlagen`); process.exit(1); }
 console.log('PERF: alle Checks bestanden ✓');

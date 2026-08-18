@@ -15,6 +15,13 @@ export class Water {
   constructor(world) {
     this.world = world;
     this.cells = new Map(); // gridKey -> amount (1..CELL_CAP)
+    // Dynamisches Budget: main.js passt BUDGET.water je nach Systemleistung
+    // an (zu langsam → ältestes Wasser wird entfernt). MAX_WATER bleibt
+    // die harte Obergrenze.
+    this.budget = MAX_WATER;
+    // Laufender Gesamt-Bestand (O(1) statt Map-Scan pro trySet –
+    // Regen + Quellen rufen trySet mehrmals pro Physik-Step auf)
+    this._total = 0;
     // Dirty-Flag für die Wasser-Instanzen in main.js: Das GPU-Buffer wird
     // nur neu hochgeladen, wenn sich Zellen tatsächlich geändert haben
     // (stehendes Wasser → kein Upload, spart auf langsamen Geräten).
@@ -23,9 +30,37 @@ export class Water {
   }
 
   totalAmount() {
-    let t = 0;
-    for (const a of this.cells.values()) t += a;
-    return t;
+    return this._total;
+  }
+
+  // Zellen-Map wurde von außen ersetzt (Save/Load) → Bestand neu zählen
+  refreshTotal() {
+    this._total = 0;
+    for (const a of this.cells.values()) this._total += a;
+  }
+
+  clear() {
+    this.cells.clear();
+    this._total = 0;
+    this._touched = true;
+    this.dirty = true;
+  }
+
+  // Adaptives Budget (Crash-Schutz): Wenn main.js das Wasser-Budget senkt,
+  // verdunstet hier das älteste Wasser (Map = Einfügereihenfolge),
+  // bis der Gesamt-Bestand wieder im Budget liegt.
+  trimTo(budget) {
+    if (this._total <= budget) return 0;
+    let removed = 0;
+    for (const kk of this.cells.keys()) {
+      if (this._total <= budget) break;
+      const a = this.cells.get(kk) || 0;
+      this.cells.delete(kk);
+      this._total -= a;
+      removed++;
+    }
+    if (removed) { this._touched = true; this.dirty = true; }
+    return removed;
   }
 
   trySet(i, j, k, amount = 1) {
@@ -34,8 +69,9 @@ export class Water {
     if (this.world.grid[kk] !== AIR) return false;
     const existing = this.cells.get(kk) || 0;
     if (existing + amount > CELL_CAP) return false;
-    if (this.totalAmount() + amount > MAX_WATER) return false;
+    if (this._total + amount > this.budget) return false;
     this.cells.set(kk, existing + amount);
+    this._total += amount;
     this._touched = true;
     this.dirty = true;
     return true;
@@ -93,8 +129,11 @@ export class Water {
         // 3) Steht still → kleine Chance zu verdunsten
         if (Math.random() < 0.006) {
           a -= 1;
-          if (a <= 0) this.cells.delete(kk);
-          else this.cells.set(kk, a);
+          this._total -= 1;
+          if (a <= 0) {
+            this._total -= a;
+            this.cells.delete(kk);
+          } else this.cells.set(kk, a);
           this._touched = true;
         }
         continue;
@@ -121,9 +160,9 @@ export class Water {
       this._touched = true;
     }
 
-    // 4) Quellen specken neues Wasser aus
+    // 4) Quellen specken neues Wasser aus (Budget = dynamisch, O(1)-Check)
     for (const skk of w.waterSources) {
-      if (this.totalAmount() >= MAX_WATER) break;
+      if (this._total >= this.budget) break;
       const [si, sj, sk] = decode(skk);
       const down = { i: si, j: sj + gdir, k: sk };
       const side = [[1, 0], [-1, 0], [0, 1], [0, -1]][(Math.random() * 4) | 0];
@@ -169,6 +208,7 @@ export class Water {
       const [i, j, k] = decode(kk);
       const dx = i + 0.5 - cx, dy = j + 0.5 - cy, dz = k + 0.5 - cz;
       if (dx * dx + dy * dy + dz * dz < r2) {
+        this._total -= (this.cells.get(kk) || 0);
         this.cells.delete(kk);
         this._touched = true;
         this.dirty = true;
