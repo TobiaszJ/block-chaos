@@ -38,6 +38,11 @@ export class World {
     this.bodyByHandle = new Map();             // rigidBody.handle -> Record
     this.waterSources = new Set();             // Set<gridKey>
     this.gravityFlipped = false;
+    // Dirty-Tracking für AO + Terrain-Instanzen: Nur veränderte Spalten
+    // müssen colH/AO neu berechnen (siehe main.js updateInstances).
+    // Ohne Tracking würde jeder Frame ein 48·48·26-Grid-Scan kosten.
+    this.gridDirty = false;
+    this.dirtyCols = new Set();                // Set<Spaltenschlüssel>, i + k*W
   }
 
   setGravityFlipped(flipped) {
@@ -46,6 +51,16 @@ export class World {
     this.physicsWorld.gravity = { x: 0, y: g, z: 0 };
     // Schläfende Blöcke aufwecken, damit sie den Flip mitbekommen
     for (const rec of this.bodies) rec.body.wakeUp();
+  }
+
+  // Für direkte Grid-Schreibzugriffe, die die Methoden unten umgehen
+  markGrid(kk) {
+    this.gridDirty = true;
+    this.dirtyCols.add(kk % (W * D));
+  }
+  resetGridDirty() {
+    this.gridDirty = false;
+    this.dirtyCols.clear();
   }
 
   // y-Richtung, in die Wasser fällt: -1 normal, +1 bei geflippter Gravitation
@@ -109,6 +124,8 @@ export class World {
       } else j++;
     }
     this.colRuns[ci] = runs;
+    this.gridDirty = true;
+    this.dirtyCols.add(ci);
   }
 
   breakGround(i, j, k) {
@@ -119,6 +136,8 @@ export class World {
   clearGround(i, j, k) {
     // wie breakGround, aber Spalten-Rebuild wird vom Aufrufer gebündelt
     this.grid[key(i, j, k)] = AIR;
+    this.gridDirty = true;
+    this.dirtyCols.add(i + k * W);
   }
 
   // Entfernt alle GROUND-Zellen in einer Spalte, die nicht bis in den Boden

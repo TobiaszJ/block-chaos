@@ -4,12 +4,14 @@ Ein ernstzunehmendes Physik-Spiel aus Würfeln. **Echte Physik** (Rapier), **ech
 null Konsequenzen. Die Welt ist ein zuckersüßes **Candy-Diorama** auf einem Podest –
 und du darfst sie komplett zerlegen.
 
-![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.2.0%20Alpha-ff5d8f)
+![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.3.0%20Alpha-ff5d8f)
 
-> 🐣 **Alpha v0.2** – Alle Features sind real. **Neu: Schwarze Löcher finden
-> einander** – sie ziehen sich an und **verschmelzen** zum größeren (mit
-> Schockwelle, Flash und Screen-Shake), dazu ein größerer Linsen-Effekt
-> (senkrechter Photonen-Halo). Erwartet weiterhin das übliche Maß an Chaos.
+> 🚀 **Alpha v0.3** – Alle Features sind real. **Neu: Performance-Paket** –
+> AO, Terrain- und Wasser-Buffer werden nur noch neu berechnet/hochgeladen,
+> wenn sich was geändert hat (Dirty-Tracking statt Full-Grid-Scan pro Frame),
+> dazu ein "Spiral-of-death"-Gürtel für langsame Geräte und ein Positions-Cache
+> im Physik-Loop. `perf.mjs` misst nach, dass die ruhige Szene spürbar günstiger
+> läuft als die Chaos-Szene.
 
 > ⚠️ **Kein einziger Fake-Feature.** Jede angegebene Fähigkeit ist real implementiert und per
 > automatisiertem Test (Playwright, siehe `test/`) verifiziert.
@@ -157,6 +159,8 @@ test/
   smoke.mjs   Init, Explosion, Grav-Flip, Push, TNT
   chaos.mjs   Kanone, Schwarzes Loch (langsam + wächst, keine Explosion), Zeitlupe
   bh2.mjs     Schwarze-Löcher-Verschmelzung (zwei Löcher, drittes bleibt unversehrt)
+  touch.mjs   Mobile Touch-Controls (Joystick, Tap-Place, Laser, Zoom)
+  perf.mjs    Performance-Budget: ruhige Szene muss deutlich günstiger sein als Chaos
   toys.mjs    Ballon, Kette, Wind, Regen
   atmo.mjs    Tag/Nacht, Screenshot, Ziel-Highlight, AO
   comf.mjs    Undo, Save/Load, Neue Insel

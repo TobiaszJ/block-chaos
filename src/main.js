@@ -564,7 +564,13 @@ async function main() {
     inStep = true;
     // Rapier 0.20: addForce AKKUMULIERT Kräfte über mehrere Steps –
     // ohne Reset würden Blöcke nach Sekunden raketenartig davonfliegen.
-    for (const rec of world.bodies) rec.body.resetForces(false);
+    // Nebenbei: Positionscache (rec._tp) pro Step – so rufen die
+    // Schwarzen-Loch-Loops unten translation() nur noch EINMAL pro
+    // Körper ab, statt O(Anzahl Löcher × Anzahl Blöcke) mal.
+    for (const rec of world.bodies) {
+      rec.body.resetForces(false);
+      rec._tp = rec.body.translation();
+    }
 
     // Reihenfolge ist kritisch (Rapier 0.20): Kräfte zurücksetzen → neue
     // Kräfte anwenden → step(). Läuft step() vorher, würde resetForces die
@@ -577,17 +583,18 @@ async function main() {
     // Schwarze Löcher: saugen LANGSAM an und WACHSEN mit jeder Beute –
     // endlos. Je größer das Loch, desto weiter greift es, desto schneller
     // saugt es und desto größer wird sein „Mund". Sie explodieren NIE.
+    const bodiesSnap = Array.from(world.bodies); // 1× pro Step, nicht pro Loch
     for (const rec of world.bodies) {
       if (rec.type !== BLACKHOLE || rec.dead) continue;
-      const bp = rec.body.translation();
+      const bp = rec._tp || rec.body.translation();
       const size  = Math.min(3.2, 1 + rec.absorbed * 0.15); // Größe (visuell + physikalisch)
       const range = 6 + size * 3;                            // Griffweite wächst (9 -> 16 m)
       const mouth = 0.5 + size * 0.45;                       // Schlund ~ Mitte des (gewachsenen) Lochs
       const speed = 0.9 + (size - 1) * 1.2;                  // Saug-Tempo wächst moderat (0.9 -> 3.5 m/s) – bleibt langsam
       const diskPrey = [];                                   // alle Beuten im Scheibenband (für den Tunnel)
-      for (const other of Array.from(world.bodies)) {
+      for (const other of bodiesSnap) {
         if (other === rec || other.dead || other.type === BLACKHOLE) continue;
-        const p = other.body.translation();
+        const p = other._tp || other.body.translation();
         const dx = bp.x - p.x, dy = bp.y - p.y, dz = bp.z - p.z;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > range * range) continue;
@@ -785,10 +792,11 @@ async function main() {
       // ihre Horizonte überlappen – das größere frisst das kleinere und
       // wächst (Schockwelle, Flash, Screen-Shake). Jedes Paar wird genau
       // ein Mal pro Step verarbeitet (Handle-Vergleich).
-      for (const b of Array.from(world.bodies)) {
+      // (Handle-Vergleich, jedes Paar genau ein Mal pro Step)
+      for (const b of bodiesSnap) {
         if (b === rec || b.dead || b.type !== BLACKHOLE) continue;
         if (b.body.handle <= rec.body.handle) continue;
-        const pb = b.body.translation();
+        const pb = b._tp || b.body.translation();
         const dx = pb.x - bp.x, dy = pb.y - bp.y, dz = pb.z - bp.z;
         const dRad = Math.hypot(dx, dz);
         const sizeB = Math.min(3.2, 1 + b.absorbed * 0.15);
@@ -848,7 +856,7 @@ async function main() {
       const m = rec.body.mass();
       const sway = Math.sin(bnow * 1.8 + rec.seed) * 0.5;
       rec.body.addForce({ x: sway, y: -world.gdir * 1.6 * 9.81 * m, z: 0 }, true);
-      const p = rec.body.translation();
+      const p = rec._tp || rec.body.translation();
       if ((world.gdir === -1 && p.y > 48) || (world.gdir === 1 && p.y < -42)) {
         particles.spawnSmall(p.x, p.y, p.z, 0xff8fb3, 22);
         Sound.pop(0.12);
@@ -956,6 +964,8 @@ async function main() {
         pushUndo();
         world.grid[kk] = AIR;
         world.waterSources.delete(kk);
+        world.markGrid(kk);
+        water.dirty = true;
         particles.spawnSmall(hit.i + 0.5, hit.j + 0.5, hit.k + 0.5, 0x38a1ff);
         Sound.pop();
         toast('Quelle entfernt. Das Wasser bleibt leider. 💧');
@@ -1032,6 +1042,8 @@ async function main() {
     if (selected === WATER_SRC) {
       world.grid[kk] = WATER_SRC;
       world.waterSources.add(kk);
+      world.markGrid(kk);
+      water.dirty = true;
       Sound.water();
       toast('Wasserquelle aktiv – jetzt wird’s nass 💧');
       return;
@@ -1228,6 +1240,7 @@ async function main() {
 
   // ---------- Steuerung ----------
   const camPos = camera.position.clone();
+  const _camEuler = new THREE.Euler(0, 0, 0, 'YXZ'); // wiederverwendbar (kein Alloc pro Frame)
   const keys = new Set();
   let locked = false;
   let started = false; // wurde das Spiel schon einmal gestartet?
@@ -1505,6 +1518,7 @@ async function main() {
     const hp = world.heightAt(11, 11);
     world.grid[key(11, hp - 2, 11)] = WATER_SRC;
     world.waterSources.add(key(11, hp - 2, 11));
+    world.markGrid(key(11, hp - 2, 11));
 
     // Turm aus Stein mit TNT-Gipfel
     const ht = world.heightAt(36, 36);
@@ -1569,7 +1583,9 @@ async function main() {
     for (const r of [...world.bodies]) removeBody(r);
     flushPendingRemove();
     world.grid.set(snap.grid);
+    world.gridDirty = true;
     water.cells = new Map(snap.water);
+    water.dirty = true;
     world.waterSources = new Set(snap.sources);
     for (let i = 0; i < W; i++) for (let k = 0; k < D; k++) world.rebuildColumn(i, k);
     for (const b of snap.bodies)
@@ -1627,6 +1643,7 @@ async function main() {
     world.grid.fill(AIR);
     world.waterSources.clear();
     water.cells.clear();
+    water.dirty = true;
     world.setGravityFlipped(false);
     world.generateTerrain();
     undoStack.length = 0;
@@ -1643,28 +1660,48 @@ async function main() {
   const _aoGray = new THREE.Color();
   const terrainAO = new Float32Array(world.grid.length).fill(1);
   const colH = new Int16Array(W * D).fill(-1);
-  function recomputeAO() {
-    // 1) Tatsächliche Spaltenhöhe (oberste GROUND-Zelle) pro Spalte
-    for (let i = 0; i < W; i++) for (let k = 0; k < D; k++) {
-      let top = -1;
-      for (let j = H - 1; j >= 0; j--) if (world.grid[key(i, j, k)] === GROUND) { top = j; break; }
-      colH[i + k * W] = top;
+  // AO für eine Terrain-Spalte (nur die oberste Zelle ist sichtbar):
+  // benachbarte Blöcke und höhere Nachbarspalten verdunkeln sie.
+  function aoCol(ci, hasBlock) {
+    const i = ci % W, k = (ci / W) | 0;
+    const j = colH[ci];
+    if (j < 0) return;
+    let o = 0;
+    if (hasBlock(i, j + 1, k)) o += 1.0;
+    if (hasBlock(i + 1, j + 1, k) || hasBlock(i - 1, j + 1, k) ||
+        hasBlock(i, j + 1, k + 1) || hasBlock(i, j + 1, k - 1)) o += 0.5;
+    const hn = (a, b) => inBounds(a, 0, b) ? colH[a + b * W] : -1;
+    if (hn(i + 1, k) > j) o += 0.35;
+    if (hn(i - 1, k) > j) o += 0.35;
+    if (hn(i, k + 1) > j) o += 0.35;
+    if (hn(i, k - 1) > j) o += 0.35;
+    terrainAO[key(i, j, k)] = Math.max(0.55, 1 - o * 0.18);
+  }
+
+  // WIRD NUR GEFUDDERT, WENN SICH WAS GEÄNDERT HAT (Grid oder Belegung –
+  // wird von updateInstances geprüft). Der alte Full-Scan kostete JEDEN
+  // Frame 48·48·26 ≈ 60k Grid-Reads + ein frisches Map + 26 Lookups pro
+  // Block. Jetzt: colH nur für die veränderten Spalten neu scannen.
+  function recomputeAO(occ) {
+    // 1) Spaltenhöhen: nur die in diesem Frame veränderten Spalten
+    if (world.gridDirty) {
+      for (const ci of world.dirtyCols) {
+        const i = ci % W, k = (ci / W) | 0;
+        let top = -1;
+        for (let j = H - 1; j >= 0; j--)
+          if (world.grid[key(i, j, k)] === GROUND) { top = j; break; }
+        colH[i + k * W] = top;
+      }
     }
-    // 2) Belegung durch dynamische Blöcke (Zelle -> true)
-    const occ = new Map();
-    for (const rec of world.bodies) {
-      if (rec.dead) continue;
-      const p = rec.body.translation();
-      occ.set(key(Math.round(p.x - 0.5), Math.round(p.y - 0.5), Math.round(p.z - 0.5)), true);
-    }
+    // 2) occ kommt von updateInstances (dort als Set gebaut + Change-Detect)
     const solidCell = (i, j, k) => inBounds(i, j, k) && world.grid[key(i, j, k)] === GROUND;
     const hasBlock = (i, j, k) => occ.has(key(i, j, k));
     // 3) Blöcke: alle festen Nachbarn (Terrain + Blöcke) verdunkeln
+    // (Positionen aus dem Frame-Cache – keine extra translation()-Aufrufe)
     const BF = 0.085, BC = 0.026, BMIN = 0.5;
     for (const rec of world.bodies) {
       if (rec.dead) continue;
-      const p = rec.body.translation();
-      const ci = Math.round(p.x - 0.5), cj = Math.round(p.y - 0.5), ck = Math.round(p.z - 0.5);
+      const ci = Math.round(rec._rx - 0.5), cj = Math.round(rec._ry - 0.5), ck = Math.round(rec._rz - 0.5);
       let face = 0, corner = 0;
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
         if (!dx && !dy && !dz) continue;
@@ -1673,56 +1710,113 @@ async function main() {
       }
       rec.ao = Math.max(BMIN, 1 - face * BF - corner * BC);
     }
-    // 4) Terrain: nur sichtbare obere Zellen; Struktur in der Nähe verdunkelt
-    for (let i = 0; i < W; i++) for (let k = 0; k < D; k++) {
-      const j = colH[i + k * W];
-      if (j < 0) continue;
-      let o = 0;
-      if (hasBlock(i, j+1, k)) o += 1.0;
-      if (hasBlock(i+1, j+1, k) || hasBlock(i-1, j+1, k) || hasBlock(i, j+1, k+1) || hasBlock(i, j+1, k-1)) o += 0.5;
-      const hn = (a, b) => inBounds(a, 0, b) ? colH[a + b * W] : -1;
-      if (hn(i+1, k) > j) o += 0.35;
-      if (hn(i-1, k) > j) o += 0.35;
-      if (hn(i, k+1) > j) o += 0.35;
-      if (hn(i, k-1) > j) o += 0.35;
-      terrainAO[key(i, j, k)] = Math.max(0.55, 1 - o * 0.18);
+    // 4) Terrain: verschmutzte Spalten + 4 Nachbarn (Grid-Change) bzw.
+    // alle sichtbaren Spalten, wenn nur die Block-Belegung sich geändert hat
+    // (ein Block ist in eine Zelle über dem Boden umgezogen / weggefallen)
+    if (world.gridDirty) {
+      const cols = [...world.dirtyCols];
+      for (const ci of world.dirtyCols) {
+        const i = ci % W, k = (ci / W) | 0;
+        if (i + 1 < W) cols.push(i + 1 + k * W);
+        if (i - 1 >= 0) cols.push(i - 1 + k * W);
+        if (k + 1 < D) cols.push(i + (k + 1) * W);
+        if (k - 1 >= 0) cols.push(i + (k - 1) * W);
+      }
+      for (const ci of cols) aoCol(ci, hasBlock);
+    } else {
+      for (let ci = 0; ci < W * D; ci++) aoCol(ci, hasBlock);
     }
   }
 
   const dummy = new THREE.Object3D();
   const _stV = new THREE.Vector3();
   const _AXIS_X = new THREE.Vector3(1, 0, 0);
-  function updateInstances() {
-    recomputeAO();
-    // Boden
-    let n = 0;
+  // --- Dirty-Tracking: AO, Terrain- und Block-Buffer werden nur neu
+  // berechnet/hochgeladen, wenn sich das Grid oder die Block-Belegung
+  // geändert haben. In einer ruhigen Szene (alles schlafend) fliegt damit
+  // der 60k-Grid-Scan UND die meisten Buffer-Uploads raus.
+  let lastOcc = new Set();
+  let terrainBuilt = false;
+  const terrainList = []; // gridKeys der GROUND-Zellen (nur bei Grid-Change neu)
+
+  // Terrain-Instanzen neu aufbauen (NUR bei Grid-Änderung): die
+  // 60k-Zellen-Suche + Matrizen-Upload laufen jetzt nur noch in
+  // "schmutzigen" Frames, nicht mehr jeden Frame.
+  function rebuildTerrain() {
+    terrainList.length = 0;
+    const grid = world.grid;
+    for (let kk = 0; kk < grid.length; kk++)
+      if (grid[kk] === GROUND) terrainList.push(kk);
     dummy.quaternion.identity();
     dummy.scale.set(1, 1, 1);
-    for (let kk = 0; kk < world.grid.length; kk++) {
-      if (world.grid[kk] !== GROUND) continue;
+    let n = 0;
+    for (const kk of terrainList) {
+      if (n >= CAP_GROUND) break;
       const [i, j, k] = decode(kk);
       dummy.position.set(i + 0.5, j + 0.5, k + 0.5);
       dummy.updateMatrix();
-      if (n < CAP_GROUND) {
-        meshes[GROUND].setMatrixAt(n, dummy.matrix);
-        _aoGray.setScalar(terrainAO[kk] || 1);
-        meshes[GROUND].setColorAt(n, _aoGray);
-        n++;
-      }
+      meshes[GROUND].setMatrixAt(n++, dummy.matrix);
     }
     meshes[GROUND].count = n;
     meshes[GROUND].instanceMatrix.needsUpdate = true;
-    if (meshes[GROUND].instanceColor) meshes[GROUND].instanceColor.needsUpdate = true;
+    terrainBuilt = true;
+  }
 
-    // Dynamische Blöcke
+  // Terrain-Grautöne (gebackenes AO) – nur bei AO-Änderung nötig
+  function uploadTerrainAO() {
+    let n = 0;
+    for (const kk of terrainList) {
+      if (n >= CAP_GROUND) break;
+      _aoGray.setScalar(terrainAO[kk] || 1);
+      meshes[GROUND].setColorAt(n++, _aoGray);
+    }
+    if (meshes[GROUND].instanceColor) meshes[GROUND].instanceColor.needsUpdate = true;
+  }
+
+  function updateInstances() {
+    // Belegung + Positions-Cache für den Frame: 1 translation() pro
+    // Block, danach für AO und Matrizen wiederverwendet (vorher 3×)
+    const occ = new Set();
+    for (const rec of world.bodies) {
+      if (rec.dead) continue;
+      const p = rec.body.translation();
+      rec._rx = p.x; rec._ry = p.y; rec._rz = p.z;
+      occ.add(key(Math.round(p.x - 0.5), Math.round(p.y - 0.5), Math.round(p.z - 0.5)));
+    }
+    // Hat sich was getan? (Grid geändert ODER Belegung eine Zelle gewechselt)
+    let occChanged = occ.size !== lastOcc.size;
+    if (!occChanged) for (const kk of occ) if (!lastOcc.has(kk)) { occChanged = true; break; }
+    const gDirty = world.gridDirty;
+    const aoDirty = gDirty || occChanged;
+    // Alles schlafend + nichts geändert → die GPU-Buffer sind aktuell
+    let allSleeping = true;
+    for (const rec of world.bodies)
+      if (!rec.dead && !rec.body.isSleeping()) { allSleeping = false; break; }
+    lastOcc = occ;
+
+    // AO nur bei tatsächlicher Änderung, danach Dirty-Flags klären
+    if (aoDirty) recomputeAO(occ);
+    if (gDirty) world.resetGridDirty();
+
+    // Terrain: Matrizen nur bei Grid-Change, AO-Farben bei AO-Änderung
+    if (!terrainBuilt) { rebuildTerrain(); uploadTerrainAO(); }
+    else if (gDirty) { rebuildTerrain(); uploadTerrainAO(); }
+    else if (occChanged) uploadTerrainAO();
+
+    // Blöcke + Kanonenrohre: hochladen, wenn sich was bewegt hat
+    // (alles schlafend + Grid sauber → Buffer auf dem GPU sind aktuell)
+    const uploadBlocks = aoDirty || !allSleeping;
+
+    // Dynamische Blöcke – bei komplett schlafender Welt (und unverändertem
+    // Grid) sind die Instanz-Buffer auf dem GPU noch aktuell → überspringen
     for (const t of BODY_TYPES) {
+      if (!uploadBlocks) continue;
       if (t === BLACKHOLE) { meshes[t].count = 0; continue; } // eigenes Visual (Ereignishorizont)
       let m = 0;
       for (const rec of world.bodies) {
         if (rec.type !== t || rec.dead) continue;
-        const p = rec.body.translation();
         const r = rec.body.rotation();
-        dummy.position.set(p.x, p.y, p.z);
+        dummy.position.set(rec._rx, rec._ry, rec._rz);
         const s = rec.stretch || 1;
         if (s > 1.03 && rec.stretchAxis) {
           // Spaghettifizierung: lokale X-Achse radial ins Loch zeigen, strecken
@@ -1753,20 +1847,21 @@ async function main() {
       if (meshes[t].instanceColor) meshes[t].instanceColor.needsUpdate = true;
     }
 
-    // Kanonenrohre
+    // Kanonenrohre (ebenso erst, wenn sich was bewegt hat)
     let bn = 0;
-    for (const rec of world.bodies) {
-      if (rec.type !== CANNON || rec.dead) continue;
-      const p = rec.body.translation();
-      const dir = rec.aimDir || { x: 0, y: 1, z: 0 };
-      dummy.position.set(p.x + dir.x * 0.55, p.y + dir.y * 0.55, p.z + dir.z * 0.55);
-      dummy.quaternion.setFromUnitVectors(_upY, _dirTmp.set(dir.x, dir.y, dir.z).normalize());
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      if (bn < 64) barrelMesh.setMatrixAt(bn++, dummy.matrix);
+    if (uploadBlocks) {
+      for (const rec of world.bodies) {
+        if (rec.type !== CANNON || rec.dead) continue;
+        const dir = rec.aimDir || { x: 0, y: 1, z: 0 };
+        dummy.position.set(rec._rx + dir.x * 0.55, rec._ry + dir.y * 0.55, rec._rz + dir.z * 0.55);
+        dummy.quaternion.setFromUnitVectors(_upY, _dirTmp.set(dir.x, dir.y, dir.z).normalize());
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        if (bn < 64) barrelMesh.setMatrixAt(bn++, dummy.matrix);
+      }
+      barrelMesh.count = bn;
+      barrelMesh.instanceMatrix.needsUpdate = true;
     }
-    barrelMesh.count = bn;
-    barrelMesh.instanceMatrix.needsUpdate = true;
 
     // Schwarze Löcher (Interstellar-Stil): schwarzer Ereignishorizont,
     // Photonenring am Horizont, rotierende Akkretionsscheibe. Der Spin ist
@@ -1807,29 +1902,36 @@ async function main() {
       }
     }
 
-    // Wasser (Quellen + fließend)
-    let wn = 0;
-    dummy.quaternion.identity();
-    dummy.scale.set(1, 1, 1);
-    for (const skk of world.waterSources) {
-      const [i, j, k] = decode(skk);
-      dummy.position.set(i + 0.5, j + 0.5, k + 0.5);
-      dummy.updateMatrix();
-      if (wn < CAP_WATER) waterMesh.setMatrixAt(wn++, dummy.matrix);
+    // Wasser (Quellen + fließend) – nur hochladen, wenn Zellen sich
+    // geändert haben (stehendes Wasser braucht keinen neuen Upload)
+    if (water.dirty) {
+      let wn = 0;
+      dummy.quaternion.identity();
+      dummy.scale.set(1, 1, 1);
+      for (const skk of world.waterSources) {
+        const [i, j, k] = decode(skk);
+        dummy.position.set(i + 0.5, j + 0.5, k + 0.5);
+        dummy.updateMatrix();
+        if (wn < CAP_WATER) waterMesh.setMatrixAt(wn++, dummy.matrix);
+      }
+      for (const kk of water.cells.keys()) {
+        const [i, j, k] = decode(kk);
+        dummy.position.set(i + 0.5, j + 0.5, k + 0.5);
+        dummy.updateMatrix();
+        if (wn < CAP_WATER) waterMesh.setMatrixAt(wn++, dummy.matrix);
+      }
+      waterMesh.count = wn;
+      waterMesh.instanceMatrix.needsUpdate = true;
+      water.dirty = false;
     }
-    for (const kk of water.cells.keys()) {
-      const [i, j, k] = decode(kk);
-      dummy.position.set(i + 0.5, j + 0.5, k + 0.5);
-      dummy.updateMatrix();
-      if (wn < CAP_WATER) waterMesh.setMatrixAt(wn++, dummy.matrix);
-    }
-    waterMesh.count = wn;
-    waterMesh.instanceMatrix.needsUpdate = true;
+    return aoDirty;
   }
 
   // ---------- Haupt-Loop ----------
   const STEP = 1 / 60;
   let last = performance.now();
+  // Performance-Zähler (test/perf.mjs): JS-Zeit pro Frame in Physik vs. Instanz-Update
+  const perf = { frames: 0, physMs: 0, instMs: 0, aoFull: 0 };
   // ---------- Ziel-Highlight (Block/Zelle, auf den man zielt) ----------
   const highlight = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(1.1, 1.1, 1.1)),
@@ -1881,8 +1983,9 @@ async function main() {
       updateDayNight(dayPhase);
     }
 
-    // Kamera
-    camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+    // Kamera (Euler wird wiederverwendet – kein Objekt-Alloc pro Frame)
+    _camEuler.set(pitch, yaw, 0);
+    camera.quaternion.setFromEuler(_camEuler);
     if (locked) {
       camera.getWorldDirection(fwd);
       right.crossVectors(fwd, UP).normalize();
@@ -1907,9 +2010,15 @@ async function main() {
     }
 
     // Physik (festes Zeitraster, in Zeitlupe 4× langsamer)
+    const t0 = performance.now();
     acc += dt * timeScale;
     let n = 0;
     while (acc >= STEP && n < 5) { stepPhysics(); acc -= STEP; n++; }
+    // "Spiral of death"-Gürtel: Auf sehr langsamen Geräten würde der
+    // Akkumulator sonst unbeschränkt wachsen und jeder Frame 5× Physik
+    // brauchen. Lieber fällt die Sim dann ein Ticken hinterher.
+    if (n >= 5) acc = 0;
+    const t1 = performance.now();
     // Wasser-CA: ~20 Hz in Welt-Zeit (folgt der Zeitlupe)
     waterAcc += dt * timeScale;
     if (waterAcc >= 1 / 20) { waterAcc %= 1 / 20; water.tick(); }
@@ -1921,7 +2030,10 @@ async function main() {
     if (laserGroup.visible && performance.now() > laserBeamUntil) laserGroup.visible = false;
     cloudDrift(now);
     particles.update(dt * timeScale, world.gdir);
-    updateInstances();
+    if (updateInstances()) perf.aoFull++;
+    perf.physMs += t1 - t0;
+    perf.instMs += performance.now() - t1;
+    perf.frames++;
 
     // Screen-Shake + Flash
     if (shake > 0.001) {
@@ -1970,7 +2082,7 @@ async function main() {
 
   // Konsolen-Spielzeug (und Smoke-Tests): von dort aus kann man alles antesten
   window.__game = {
-    world, water, particles, renderer, scene, camera, meshes, THREE,
+    world, water, particles, renderer, scene, camera, meshes, THREE, perf,
     spawnBlock, removeBody, explodeAt, flipGravity,
     doBreak, doPlace, doPush, selectSlot, aim, fireLaser, laserGroup,
     fireCannon, fireAllCannons, setSlowMo, sound: Sound, gustWind, startRain, attachChainJoint,

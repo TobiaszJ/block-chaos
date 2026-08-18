@@ -15,6 +15,11 @@ export class Water {
   constructor(world) {
     this.world = world;
     this.cells = new Map(); // gridKey -> amount (1..CELL_CAP)
+    // Dirty-Flag für die Wasser-Instanzen in main.js: Das GPU-Buffer wird
+    // nur neu hochgeladen, wenn sich Zellen tatsächlich geändert haben
+    // (stehendes Wasser → kein Upload, spart auf langsamen Geräten).
+    this.dirty = true;
+    this._touched = false;
   }
 
   totalAmount() {
@@ -31,6 +36,8 @@ export class Water {
     if (existing + amount > CELL_CAP) return false;
     if (this.totalAmount() + amount > MAX_WATER) return false;
     this.cells.set(kk, existing + amount);
+    this._touched = true;
+    this.dirty = true;
     return true;
   }
 
@@ -59,11 +66,13 @@ export class Water {
             // ganzes Volumen fällt
             this.cells.delete(kk);
             this.cells.set(dk, a);
+            this._touched = true;
           } else if (below < CELL_CAP) {
             const pour = Math.min(a, CELL_CAP - below);
             this.cells.set(kk, a - pour);
             this.cells.set(dk, below + pour);
             if (a - pour === 0) this.cells.delete(kk);
+            this._touched = true;
           }
           continue;
         }
@@ -86,6 +95,7 @@ export class Water {
           a -= 1;
           if (a <= 0) this.cells.delete(kk);
           else this.cells.set(kk, a);
+          this._touched = true;
         }
         continue;
       }
@@ -108,6 +118,7 @@ export class Water {
       }
       if (a <= 0) this.cells.delete(kk);
       else this.cells.set(kk, a);
+      this._touched = true;
     }
 
     // 4) Quellen specken neues Wasser aus
@@ -119,6 +130,9 @@ export class Water {
       const t = Math.random() < 0.6 ? down : { i: si + side[0], j: sj, k: sk + side[1] };
       this.trySet(t.i, t.j, t.k, 1);
     }
+    // Tick abgeschlossen: Dirty-Status an den Render-Loop übergeben
+    if (this._touched) this.dirty = true;
+    this._touched = false;
   }
 
   // Auftrieb + Widerstand für alle dynamischen Blöcke (pro Physik-Step).
@@ -127,7 +141,9 @@ export class Water {
     const gdir = w.gdir;
     for (const rec of w.bodies) {
       if (rec.dead) continue;
-      const p = rec.body.translation();
+      // Positionscache vom Anfang des Physikschritts (1 translation() pro
+      // Körper statt je nach Aufrufer mehrfach – spart GC-Druck)
+      const p = rec._tp || rec.body.translation();
       const ci = Math.round(p.x - 0.5), cj = Math.round(p.y - 0.5), ck = Math.round(p.z - 0.5);
       // Nur Wasserschichten unterhalb und auf Höhe der Blockmitte zählen
       // (sonst würden auch Blöcke neben der Pfütze abspringen).
@@ -152,7 +168,11 @@ export class Water {
     for (const kk of Array.from(this.cells.keys())) {
       const [i, j, k] = decode(kk);
       const dx = i + 0.5 - cx, dy = j + 0.5 - cy, dz = k + 0.5 - cz;
-      if (dx * dx + dy * dy + dz * dz < r2) this.cells.delete(kk);
+      if (dx * dx + dy * dy + dz * dz < r2) {
+        this.cells.delete(kk);
+        this._touched = true;
+        this.dirty = true;
+      }
     }
   }
 }
