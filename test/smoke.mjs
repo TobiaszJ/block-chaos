@@ -8,6 +8,14 @@ const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message));
 
+// Screenshots sind nur Kosmetik (CI: SwiftShader-Frame ist soweiß weiiß).
+// Unter Last kann der Headless-Compositor hängen -> Timeout. Dann nur
+// warnen, NICHT die Suite crashen lassen (bekanntes CI-Flake).
+const safeShot = async (path) => {
+  try { await page.screenshot({ path, timeout: 10000 }); }
+  catch { console.log('SCREENSHOT: ' + path + ' übersprungen (Headless-Compositor zu langsam – kein Spiel-Bug)'); }
+};
+
 for (let _a = 1; _a <= 5; _a++) {
   try { await page.goto('http://127.0.0.1:5173/', { waitUntil: 'commit', timeout: 30000 }); break; }
   catch (_e) { if (_a === 5) throw _e; await new Promise(_r => setTimeout(_r, 2000 * _a)); }
@@ -59,12 +67,12 @@ const flip = await page.evaluate(async () => {
   return { flipped: g.world.gravityFlipped, y0: +y0.toFixed(2), y1: +y1.toFixed(2), wentUp: y1 > y0 + 0.5 };
 });
 console.log('GRAV-FLIP:', JSON.stringify(flip));
-await page.screenshot({ path: 'shot-flip.png' });
+await safeShot('shot-flip.png');
 
 // Zurück, Wasser sollte nach unten sacken
 await page.evaluate(() => window.__game.flipGravity());
 await page.waitForTimeout(3000);
-await page.screenshot({ path: 'shot-normal.png' });
+await safeShot('shot-normal.png');
 
 // Blöcke neben der Kamera platzieren & per Knall weg
 const push = await page.evaluate(async () => {
