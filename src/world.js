@@ -134,6 +134,7 @@ export class World {
   }
 
   clearGround(i, j, k) {
+    if (j === 0) return; // Inselboden unzerstörbar (Backstop: kein Pfad darf ihn aushöhlen)
     // wie breakGround, aber Spalten-Rebuild wird vom Aufrufer gebündelt
     this.grid[key(i, j, k)] = AIR;
     this.gridDirty = true;

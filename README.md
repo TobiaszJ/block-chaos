@@ -4,18 +4,22 @@ Ein ernstzunehmendes Physik-Spiel aus Würfeln. **Echte Physik** (Rapier), **ech
 null Konsequenzen. Die Welt ist ein zuckersüßes **Candy-Diorama** auf einem Podest –
 und du darfst sie komplett zerlegen.
 
-![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.4.0%20Alpha-ff5d8f)
+![tech](https://img.shields.io/badge/WebGPU-three.js%20r185-7fd4ff) ![physik](https://img.shields.io/badge/Physik-Rapier%20WASM-ff5d8f) ![version](https://img.shields.io/badge/Version-0.5.0%20Alpha-ff5d8f)
 
-> 🐢 **Alpha v0.4** – Alle Features sind real. **Neu: Crash-Schutz per
-> adaptivem Element-Budget** – Das System misst seine eigene FPS und senkt
-> bei Atemnot (<25 fps) automatisch Objekt- und Wasser-Budget: Die ältesten
-> Blöcke *puffen* weg, altes Wasser verdunstet (🐢 im HUD). Hat es wieder
-> Luft (≥55 fps für ~2s), wächst das Budget bis zur harten Grenze zurück.
-> Ein Notbrems-Gürtel halbiert das Budget sofort, wenn ein einzelner
-> Physik-Frame >250 ms dauert. Damit crasht kein System mehr, das zu viele
-> Elemente bekommt – schwache Geräte bekommen einfach weniger Chaos. Auf dem
-> Fundament des v0.3 Performance-Pakets (Dirty-Tracking, Positions-Cache,
-> Spiral-of-death-Gürtel). `perf.mjs` misst beides nach.
+> 🧲 **Alpha v0.5** – Alle Features sind real. **Neu: stabile Insel +
+> Magnet-Ausrichtung.** (1) **Inselboden unzerstörbar** – Explosionen (und
+> L-Klick) dürfen nie durch die unterste Schicht bohren: vorher konnte ein
+> TNT-Treffer in flachem Gebiet ein Loch *durch die ganze Insel* reißen,
+> durch das Schwarze Löcher und Blöcke aus der Welt fielen. (2) **
+> Voxeldiktatur** – Das Grid ist die Wahrheit: Jeder Körper, dessen Mittelpunkt
+> in einer Fest-Zelle steckt (Collider-Rebuild, Tunneln), wird sofort an die
+> nächste freie Fläche geschnappt – Terrain verhakt sich nie mehr. (3) **
+> Magnet-Blöcke** – Langsame Blöcke (v < 2 m/s) saugen sich an: Sie werden zur
+> nächsten freien Grid-Zelle neben Terrain *oder* anderem Block gezogen und
+> mit leisem Klick einrasten. Ein Rast-Lock verhindert Mikro-Jitter,
+> unter Wasser greift der Magnet nicht. Auf dem Fundament des v0.4
+> Crash-Schutzes. `terrain.mjs` verifiziert alles – inkl. dem alten
+> Bohr-durch-die-Insel-Repro, das jetzt grün ist.
 
 > ⚠️ **Kein einziger Fake-Feature.** Jede angegebene Fähigkeit ist real implementiert und per
 > automatisiertem Test (Playwright, siehe `test/`) verifiziert.
@@ -163,6 +167,7 @@ test/
   smoke.mjs   Init, Explosion, Grav-Flip, Push, TNT
   chaos.mjs   Kanone, Schwarzes Loch (langsam + wächst, keine Explosion), Zeitlupe
   bh2.mjs     Schwarze-Löcher-Verschmelzung (zwei Löcher, drittes bleibt unversehrt)
+  terrain.mjs   Inselboden-Schutz, Voxeldiktatur (Block + Loch), Magnet-Ausrichtung
   touch.mjs   Mobile Touch-Controls (Joystick, Tap-Place, Laser, Zoom)
   perf.mjs    Performance-Budget + adaptiver Crash-Schutz (Ruhe vs. Chaos, Cuts greifen)
   toys.mjs    Ballon, Kette, Wind, Regen

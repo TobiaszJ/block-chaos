@@ -584,7 +584,10 @@ async function main() {
           if (dx * dx + dy * dy + dz * dz >= RT * RT) continue;
           const kk = key(i, j, k);
           const t = world.grid[kk];
-          if (t === GROUND) { world.clearGround(i, j, k); dirtyCols.add(i + k * W); }
+          if (t === GROUND) {
+            if (j === 0) continue; // Inselboden ist unzerstörbar – sonst bläst man durch die Insel
+            world.clearGround(i, j, k); dirtyCols.add(i + k * W);
+          }
           else if (t === WATER_SRC) { world.grid[kk] = AIR; world.waterSources.delete(kk); }
         }
     // Spalten neu aufbauen UND schwebende Überhänge entfernen – sonst bleiben
@@ -632,7 +635,27 @@ async function main() {
     // Körper ab, statt O(Anzahl Löcher × Anzahl Blöcke) mal.
     for (const rec of world.bodies) {
       rec.body.resetForces(false);
-      rec._tp = rec.body.translation();
+      const p = rec.body.translation();
+      rec._tp = p;
+      // Voxeldiktatur: Das Grid ist die Wahrheit. Steckt ein Körper (Mittelpunkt)
+      // in einer GROUND-Zelle, liegt er im (neu aufgebauten) Collider fest oder
+      // ist durchs Terrain getunnelt → sofort an die nächste freie Fläche
+      // zurück. Bei normaler Schwerkraft immer NACH OBEN (niemals unter die
+      // Insel absaufen); bei geflippter Gravitation nach unten – außer in der
+      // Bodenzeile, die würde die Welt verlassen.
+      const ci = Math.floor(p.x), cj = Math.floor(p.y), ck = Math.floor(p.z);
+      if (ci >= 0 && ci < W && ck >= 0 && ck < D && cj >= 0 && cj < H && world.grid[key(ci, cj, ck)] === GROUND) {
+        let bot = cj;
+        while (bot > 0 && world.grid[key(ci, bot - 1, ck)] === GROUND) bot--;
+        const upY = world.surfaceBelow(ci, ck, cj) + 0.5; // Topfläche des Runs + halbe Kugel
+        const downY = bot - 0.5;                          // Bodenfläche des Runs
+        const ny = world.gravityFlipped && bot > 0 ? downY : upY;
+        rec.body.setTranslation({ x: p.x, y: ny, z: p.z }, true);
+        const v = rec.body.linvel();
+        const vy = ny < p.y ? (v.y > 0 ? 0 : v.y) : (v.y < 0 ? 0 : v.y);
+        if (vy !== v.y) rec.body.setLinvel({ x: v.x, y: vy, z: v.z }, true);
+        rec._tp = { x: p.x, y: ny, z: p.z };
+      }
     }
 
     // Reihenfolge ist kritisch (Rapier 0.20): Kräfte zurücksetzen → neue
@@ -640,8 +663,10 @@ async function main() {
     // Kräfte des Vortags löschen, bevor sie integriert werden –
     // Bug: Ballons stiegen nicht, Wasserauftrieb wirkte nicht.
 
-    // Stretch-Reset: Spaghettifizierung gilt nur, solange ein Loch wirkt
-    for (const rb of world.bodies) rb.stretch = 1;
+    // Stretch-Reset: Spaghettifizierung gilt nur, solange ein Loch wirkt.
+    // _bhClaimed-Reset: Beute, die kein Loch mehr anzieht, ist wieder
+    // frei für den Magnet (z.B. nach einer Explosion, die sie herausschleudert).
+    for (const rb of world.bodies) { rb.stretch = 1; rb._bhClaimed = false; }
 
     // Schwarze Löcher: saugen LANGSAM an und WACHSEN mit jeder Beute –
     // endlos. Je größer das Loch, desto weiter greift es, desto schneller
@@ -669,6 +694,10 @@ async function main() {
           Sound.suck();
           continue;
         }
+        // Beute wird beansprucht: der Magnet (läuft später im Step) darf sie
+        // nicht mehr anfassen – sonst würde sein Servo die sanfte Sog-
+        // Geschwindigkeit überschreiben und das Loch seine Mahlzeit verlieren.
+        other._bhClaimed = true;
         // Akkretionsscheiben-Band (auch wichtig für das Sog-Zielpunkt):
         // Die Scheibe ist eine HORIZONTALE Ebene – Mitgliedschaft läuft
         // über den horizontalen Abstand, nicht den 3D-Abstand.
@@ -937,6 +966,108 @@ async function main() {
 
     water.applyBuoyancy();
 
+    // ---------- Magnet-Ausrichtung ----------
+    // Langsame Blöcke (v < 2 m/s) werden zur nächsten freien Grid-Zelle neben
+    // einem Anker (Terrain ODER anderem Block) gezogen und bei < 0.12 m hards
+    // gesnapped. Danach „verrastet" der Körper, bis er sich wirklich
+    // (> 0.3 m) bewegt – sonst würden ruhende Blöcke mikro-jittern und
+    // niemals schlafen. Unter Wasser wirkt der Magnet nicht.
+    {
+      const isMag = (t) => t === WOOD || t === STONE || t === ICE || t === GUMMY || t === TNT;
+      // Welcher Körper sitzt in welcher Zelle (für die Freizellen-Prüfung)
+      const occ = new Map();
+      for (const rec of world.bodies) {
+        if (rec.dead || !rec._tp) continue;
+        const kk = key(Math.floor(rec._tp.x), Math.floor(rec._tp.y), Math.floor(rec._tp.z));
+        const arr = occ.get(kk);
+        if (arr) arr.push(rec); else occ.set(kk, [rec]);
+      }
+      // Ketten-Glieder haben ein Gelenk: kein Tauziehen zwischen Magnet und Joint
+      const jointed = new Set();
+      for (const j of activeJoints) { if (j.a) jointed.add(j.a); if (j.b) jointed.add(j.b); }
+      const F6 = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+      const freeFor = (i, j, k, self) => {
+        if (!inBounds(i, j, k)) return false;
+        if (world.grid[key(i, j, k)] !== AIR) return false;
+        if (water.cells.has(key(i, j, k))) return false;
+        const arr = occ.get(key(i, j, k));
+        return !(arr && arr.some((r) => r !== self));
+      };
+      for (const rec of world.bodies) {
+        if (rec.dead || !rec._tp) continue;
+        if (rec.type !== WOOD && rec.type !== STONE && rec.type !== ICE && rec.type !== GUMMY && rec.type !== TNT) continue;
+        if (rec._bhClaimed) continue; // Beute eines Schwarzen Lochs – gehört der Magnet nicht dazu
+        if (jointed.has(rec)) continue;
+        if (rec.body.isSleeping()) continue;
+        const p = rec._tp;
+        const v = rec.body.linvel();
+        const spd = Math.hypot(v.x, v.y, v.z);
+        if (spd >= 2.0) continue; // nur wirklich Langsame werden ausgerichtet
+        const ci = Math.floor(p.x), cj = Math.floor(p.y), ck = Math.floor(p.z);
+        if (inBounds(ci, cj, ck) && water.cells.has(key(ci, cj, ck))) continue; // nichts unter Wasser
+        if (rec._magnetLock) {
+          const dl = Math.hypot(p.x - rec._magnetLock.x, p.y - rec._magnetLock.y, p.z - rec._magnetLock.z);
+          if (dl < 0.3) continue; // noch an der Snap-Stelle → weiter ruhen
+          rec._magnetLock = null; // wirklich bewegt → freigeben
+        }
+        let target = null, bestD2 = 0.75 * 0.75;
+        // Fast-Pfad: eigene Zelle frei (kein anderer Körper, kein Wasser) UND
+        // an Terrain angrenzend → zum Zentrum der eigenen Zelle ausrichten
+        if (inBounds(ci, cj, ck) && world.grid[key(ci, cj, ck)] === AIR) {
+          const selfArr = occ.get(key(ci, cj, ck));
+          const selfOnly = !selfArr || selfArr.every((r) => r === rec);
+          if (selfOnly) {
+            for (const [di, dj, dk] of F6) {
+              if (inBounds(ci + di, cj + dj, ck + dk) && world.grid[key(ci + di, cj + dj, ck + dk)] === GROUND) {
+                const ddx = ci + 0.5 - p.x, ddy = cj + 0.5 - p.y, ddz = ck + 0.5 - p.z;
+                const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                if (d2 < 0.9 * 0.9) { bestD2 = d2; target = { x: ci + 0.5, y: cj + 0.5, z: ck + 0.5 }; }
+                break;
+              }
+            }
+          }
+        }
+        // Langsam-Pfad: 27 Nachbarzellen als Anker (Terrain ODER Magnet-Block)
+        // → nächstgelegene freie Zelle, die flächenangrenzend an den Anker liegt
+        if (!target) {
+          for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) {
+            const ai = ci + di, aj = cj + dj, ak = ck + dk;
+            if (!inBounds(ai, aj, ak)) continue;
+            const isTerrain = world.grid[key(ai, aj, ak)] === GROUND;
+            const arr = occ.get(key(ai, aj, ak));
+            const anchor = arr && arr.some((r) => r !== rec && !r.dead && isMag(r.type));
+            if (!isTerrain && !anchor) continue;
+            for (const [ti, tj, tk] of F6) {
+              const tI = ai + ti, tJ = aj + tj, tK = ak + tk;
+              if (!freeFor(tI, tJ, tK, rec)) continue;
+              const tx = tI + 0.5, ty = tJ + 0.5, tz = tK + 0.5;
+              const ddx = tx - p.x, ddy = ty - p.y, ddz = tz - p.z;
+              const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+              if (d2 < bestD2) { bestD2 = d2; target = { x: tx, y: ty, z: tz }; }
+            }
+          }
+        }
+        if (!target) continue;
+        const d = Math.sqrt(bestD2);
+        if (d < 0.12 && spd < 0.5) {
+          if (d > 0.01) { // erst bei echter Bewegung klicken (kein Spam)
+            rec.body.setTranslation(target, true);
+            rec.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+            rec._magnetLock = { x: target.x, y: target.y, z: target.z };
+            perf.snaps = (perf.snaps || 0) + 1;
+            Sound.snap();
+          }
+        } else if (d <= 0.75) {
+          // Servo (NICHT Feder): die Zielgeschwindigkeit wird direkt gesetzt.
+          // Eine Kraft würde an der Reibung scheitern und der Block vor der
+          // Snap-Radien stecken bleiben; die gesetzte Geschwindigkeit wird
+          // pro Step neu asserted und lässt sich von der Reibung nicht halten.
+          const k = 3.0; // 1/s – je näher, desto ruhiger
+          rec.body.setLinvel({ x: (target.x - p.x) * k, y: (target.y - p.y) * k, z: (target.z - p.z) * k }, true);
+        }
+      }
+    }
+
     // Jetzt integrieren: step() nimmt die oben gesetzten Kräfte mit.
     try {
       world.physicsWorld.step(eq);
@@ -1019,6 +1150,10 @@ async function main() {
       const kk = key(hit.i, hit.j, hit.k);
       const t = world.grid[kk];
       if (t === GROUND) {
+        if (hit.j === 0) {
+          toast('Der Inselboden ist unzerstörbar. 🏝️');
+          return;
+        }
         pushUndo();
         world.breakGround(hit.i, hit.j, hit.k);
         particles.spawnSmall(hit.i + 0.5, hit.j + 0.5, hit.k + 0.5, 0x59c98a);
@@ -1995,7 +2130,7 @@ async function main() {
   const STEP = 1 / 60;
   let last = performance.now();
   // Performance-Zähler (test/perf.mjs): JS-Zeit pro Frame in Physik vs. Instanz-Update
-  const perf = { frames: 0, physMs: 0, instMs: 0, aoFull: 0 };
+  const perf = { frames: 0, physMs: 0, instMs: 0, aoFull: 0, snaps: 0 };
   // ---------- Ziel-Highlight (Block/Zelle, auf den man zielt) ----------
   const highlight = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(1.1, 1.1, 1.1)),

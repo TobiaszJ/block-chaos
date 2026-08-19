@@ -118,6 +118,10 @@ export const Sound = {
     tone({ freq: 160, end: 760, dur: 0.5, type: 'sine', gain: 0.3 });
     tone({ freq: 760, end: 160, dur: 0.4, type: 'sine', gain: 0.18 });
   },
+  snap() { // Magnet: Block rastet in die Grid-Position ein
+    if (!ok('snap', 70)) return;
+    tone({ freq: 1500, end: 950, dur: 0.05, type: 'sine', gain: 0.14 });
+  },
   suck() { // Schwarzes Loch schluckt
     if (!ok('suck', 120)) return;
     tone({ freq: 240, end: 35, dur: 0.35, type: 'sawtooth', gain: 0.22 });
